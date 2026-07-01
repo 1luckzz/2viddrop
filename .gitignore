@@ -1,0 +1,12 @@
+node_modules/
+downloads/
+*.log
+*.part
+*.ytdl
+*.mp4
+*.mp3
+*.webm
+.env
+yt-dlp.exe
+ffmpeg.exe
+cookies.txt
