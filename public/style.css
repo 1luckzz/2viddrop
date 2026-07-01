@@ -1,7 +1,7 @@
 :root {
-  --bg:       #f5f6fa;
+  --bg:       #ffffff;
   --surface:  #ffffff;
-  --surface2: #fbfaf7;
+  --surface2: #f7f7f9;
   --border:   #e7e8f0;
   --border2:  #d9dbe6;
   --text:     #14151d;
@@ -41,7 +41,15 @@ html, body { transition: background-color 0.25s ease, color 0.25s ease; }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { font-size: 15px; scroll-behavior: smooth; }
-body { background: var(--bg); color: var(--text); font-family: var(--ff); -webkit-font-smoothing: antialiased; }
+body {
+  background: var(--bg);
+  color: var(--text); font-family: var(--ff); -webkit-font-smoothing: antialiased;
+  background-image: url('hero-bg.jpg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
 a { color: inherit; text-decoration: none; }
 img { display: block; max-width: 100%; }
 
@@ -85,34 +93,8 @@ html[data-theme="dark"] .theme-toggle .icon-moon { display: block; }
   position: relative;
   overflow: hidden;
   padding: 96px 0 64px;
-  background-image:
-    linear-gradient(180deg, rgba(13,14,19,0.82), rgba(13,14,19,0.94)),
-    url('hero-bg.jpg');
-  background-size: cover;
-  background-position: center;
-}
-html[data-theme="light"] .hero {
-  background-image:
-    linear-gradient(180deg, rgba(245,246,250,0.88), rgba(245,246,250,0.96)),
-    url('hero-bg.jpg');
 }
 .hero h1, .hero-sub, .hero-tag { position: relative; z-index: 1; }
-.hero::before {
-  content: '';
-  position: absolute;
-  width: 560px; height: 560px;
-  top: -220px; right: -180px;
-  background: radial-gradient(circle at 35% 35%, var(--accent) 0%, rgba(255,91,61,0) 68%);
-  opacity: 0.16;
-  filter: blur(20px);
-  border-radius: 42% 58% 65% 35% / 45% 40% 60% 55%;
-  animation: blobMove 12s ease-in-out infinite;
-  z-index: 0;
-}
-@keyframes blobMove {
-  0%, 100% { border-radius: 42% 58% 65% 35% / 45% 40% 60% 55%; transform: translate(0,0) scale(1); }
-  50%      { border-radius: 60% 40% 35% 65% / 55% 62% 38% 45%; transform: translate(-16px, 14px) scale(1.05); }
-}
 .hero .container { position: relative; z-index: 1; }
 .hero-tag {
   display: inline-flex; align-items: center; gap: 8px;
@@ -307,7 +289,6 @@ html[data-theme="light"] .hero {
   .nav-toggle { display: flex; }
   .theme-toggle { margin-left: auto; }
   .hero { padding: 56px 0 44px; }
-  .hero::before { width: 380px; height: 380px; top: -140px; right: -140px; }
   .hero h1 { letter-spacing: -1px; }
   .video-row { flex-direction: column; }
   .thumb-wrap { width: 100%; height: 180px; }
