@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="VidDrop — Baixe vídeos do YouTube, Instagram, TikTok e +1000 sites gratuitamente." />
   <title>VidDrop — Baixador de Vídeos Grátis</title>
+  <script>
+    (function() {
+      var saved = localStorage.getItem('viddrop-theme');
+      var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
@@ -34,6 +41,15 @@
           </div>
         </div>
       </nav>
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Alternar tema claro/escuro">
+        <svg class="icon-sun" width="17" height="17" viewBox="0 0 17 17" fill="none">
+          <circle cx="8.5" cy="8.5" r="3.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8.5 1.2v1.6M8.5 14.2v1.6M15.8 8.5h-1.6M3.9 8.5H2.2M13.5 3.5l-1.1 1.1M4.6 12.4l-1.1 1.1M13.5 13.5l-1.1-1.1M4.6 4.6L3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <svg class="icon-moon" width="17" height="17" viewBox="0 0 17 17" fill="none">
+          <path d="M14.5 10.2A6 6 0 0 1 6.8 2.5a6.3 6.3 0 1 0 7.7 7.7z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </button>
       <button class="nav-toggle" onclick="toggleMenu()" aria-label="Menu">
         <span></span><span></span><span></span>
       </button>
@@ -250,6 +266,13 @@
   <script src="app.js"></script>
   <script>
     function toggleMenu() { document.getElementById('mobileMenu').classList.toggle('open'); }
+    function toggleTheme() {
+      const html = document.documentElement;
+      const current = html.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('viddrop-theme', next);
+    }
     function clearInput() {
       document.getElementById('urlInput').value = '';
       document.getElementById('clearBtn').style.display = 'none';
