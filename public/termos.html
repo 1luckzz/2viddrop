@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VidDrop — Termos de Uso</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="/" class="logo">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="10" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M11 7v8M8 12l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        VidDrop
+      </a>
+      <nav class="site-nav">
+        <a href="/#como-usar" data-i18n="nav_how">Como usar</a>
+        <a href="/#faq" data-i18n="nav_faq">FAQ</a>
+        <a href="termos.html" data-i18n="nav_terms">Termos</a>
+        <a href="privacidade.html" data-i18n="nav_privacy">Privacidade</a>
+        <div class="lang-switcher">
+          <button class="lang-btn" onclick="document.getElementById('langMenu').classList.toggle('open')">🌐</button>
+          <div class="lang-menu" id="langMenu">
+            <div class="lang-options" id="langOptions"></div>
+          </div>
+        </div>
+      </nav>
+      <button class="nav-toggle" onclick="document.getElementById('mobileMenu').classList.toggle('open')" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+    <div class="mobile-menu" id="mobileMenu">
+      <a href="/#como-usar" data-i18n="nav_how">Como usar</a>
+      <a href="/#faq" data-i18n="nav_faq">FAQ</a>
+      <a href="termos.html" data-i18n="nav_terms">Termos</a>
+      <a href="privacidade.html" data-i18n="nav_privacy">Privacidade</a>
+    </div>
+  </header>
+
+  <div class="legal-page">
+    <div class="container legal-container">
+      <h1 data-i18n="terms_title">Termos de Uso</h1>
+      <p class="legal-date" data-i18n="last_updated">Última atualização: Janeiro de 2025</p>
+      <div class="legal-content" id="legalContent"></div>
+    </div>
+  </div>
+
+  <footer class="site-footer">
+    <div class="footer-bottom">
+      <div class="container">
+        <p data-i18n="footer_bottom">© 2024 VidDrop</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="i18n.js"></script>
+  <script src="legal.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      initLegalPage('terms');
+    });
+  </script>
+</body>
+</html>

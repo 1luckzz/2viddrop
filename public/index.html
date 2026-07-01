@@ -1,1 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="VidDrop — Baixe vídeos do YouTube, Instagram, TikTok e +1000 sites gratuitamente." />
+  <title>VidDrop — Baixador de Vídeos Grátis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a href="/" class="logo">
+        <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+          <circle cx="11" cy="11" r="10" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M11 7v8M8 12l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        VidDrop
+      </a>
+      <nav class="site-nav">
+        <a href="#como-usar" data-i18n="nav_how">Como usar</a>
+        <a href="#faq" data-i18n="nav_faq">FAQ</a>
+        <a href="termos.html" data-i18n="nav_terms">Termos</a>
+        <a href="privacidade.html" data-i18n="nav_privacy">Privacidade</a>
+        <div class="lang-switcher">
+          <button class="lang-btn" onclick="document.getElementById('langMenu').classList.toggle('open')">
+            🌐
+          </button>
+          <div class="lang-menu" id="langMenu">
+            <div class="lang-options" id="langOptions"></div>
+          </div>
+        </div>
+      </nav>
+      <button class="nav-toggle" onclick="toggleMenu()" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+    <div class="mobile-menu" id="mobileMenu">
+      <a href="#como-usar" onclick="toggleMenu()" data-i18n="nav_how">Como usar</a>
+      <a href="#faq" onclick="toggleMenu()" data-i18n="nav_faq">FAQ</a>
+      <a href="termos.html" data-i18n="nav_terms">Termos</a>
+      <a href="privacidade.html" data-i18n="nav_privacy">Privacidade</a>
+      <div class="mobile-lang">
+        <p style="font-size:11px;color:var(--muted);margin-bottom:8px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px">Idioma</p>
+        <div class="lang-options-mobile" id="langOptionsMobile"></div>
+      </div>
+    </div>
+  </header>
 
+  <section class="hero">
+    <div class="container">
+      <p class="hero-tag" data-i18n="tag">Grátis · Sem cadastro · Sem limites</p>
+      <h1 data-i18n-html="h1">Baixe qualquer vídeo<br>em segundos</h1>
+      <p class="hero-sub" data-i18n="sub">YouTube, Instagram, TikTok, Twitter e +1000 sites</p>
+
+      <div class="downloader">
+        <div class="input-group">
+          <div class="input-wrap">
+            <svg class="input-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M6.5 1a5.5 5.5 0 1 0 3.47 9.77L14 14.5l1-1-4.03-4.03A5.5 5.5 0 0 0 6.5 1zm0 1.5a4 4 0 1 1 0 8 4 4 0 0 1 0-8z" fill="currentColor"/>
+            </svg>
+            <input type="text" id="urlInput" data-i18n="placeholder" placeholder="Cole o link do vídeo aqui..." autocomplete="off" spellcheck="false" />
+            <button class="clear-btn" id="clearBtn" onclick="clearInput()">✕</button>
+          </div>
+          <button id="fetchBtn" onclick="fetchInfo()">
+            <span id="fetchBtnText" data-i18n="btn_search">Baixar</span>
+          </button>
+        </div>
+        <p class="disclaimer" data-i18n="disclaimer">Ao baixar, você confirma que o conteúdo é para uso pessoal e não comercial.</p>
+
+        <div id="videoInfo" class="video-info hidden">
+          <div class="divider"></div>
+          <div class="video-row">
+            <div class="thumb-wrap">
+              <img id="thumbnail" src="" alt="" />
+              <div class="play-icon">▶</div>
+            </div>
+            <div class="video-meta">
+              <span class="meta-badge" data-i18n="video_found">Vídeo encontrado</span>
+              <h2 id="videoTitle"></h2>
+              <span id="videoDuration" class="duration-chip"></span>
+              <div class="format-section">
+                <p class="format-label" data-i18n="quality">Selecione a qualidade</p>
+                <div class="format-grid" id="formatTabs"></div>
+              </div>
+              <button class="dl-btn" onclick="startDownload()">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M8 2v9M5 8l3 3 3-3M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span data-i18n="btn_download">Baixar vídeo</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div id="progressSection" class="progress-section hidden">
+          <div class="divider"></div>
+          <div class="progress-head">
+            <span id="progressText" data-i18n="preparing">Preparando...</span>
+            <span id="progressPct" class="progress-pct">0%</span>
+          </div>
+          <div class="progress-track"><div id="progressBar" class="progress-fill"></div></div>
+          <p id="progressSpeed" class="progress-speed"></p>
+        </div>
+
+        <div id="errorBox" class="error-box hidden">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M8 5v4M8 10.5v.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span id="errorMsg"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="como-usar">
+    <div class="container">
+      <h2 class="section-title" data-i18n="how_title">Como usar o VidDrop</h2>
+      <p class="section-sub" data-i18n="how_sub">Três passos simples</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3 data-i18n="step1_title">Cole o link</h3>
+          <p data-i18n="step1_desc">Copie a URL do vídeo e cole no campo acima.</p>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3 data-i18n="step2_title">Escolha a qualidade</h3>
+          <p data-i18n="step2_desc">Selecione o formato desejado.</p>
+        </div>
+        <div class="step-arrow">→</div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3 data-i18n="step3_title">Baixe o arquivo</h3>
+          <p data-i18n="step3_desc">Clique em Baixar e salve.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section section-alt">
+    <div class="container">
+      <h2 class="section-title" data-i18n="feat_title">Por que usar o VidDrop?</h2>
+      <div class="features">
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2l2.5 6.5H20l-5.5 4 2 6.5L11 15l-5.5 4 2-6.5L2 8.5h6.5L11 2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></div>
+          <h3 data-i18n="f1t">100% Gratuito</h3>
+          <p data-i18n="f1d">Sem planos pagos, sem limites escondidos.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.5"/><path d="M11 7v4l3 2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+          <h3 data-i18n="f2t">Download Rápido</h3>
+          <p data-i18n="f2d">Tecnologia de fragmentos paralelos.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="3" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.5"/><path d="M7 11l3 3 5-5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <h3 data-i18n="f3t">Sem Cadastro</h3>
+          <p data-i18n="f3d">Não pedimos informação pessoal.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 3C7 3 4 7 4 11s3 8 7 8 7-4 7-8-3-8-7-8z" stroke="currentColor" stroke-width="1.5"/><path d="M8 11h6M11 8v6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></div>
+          <h3 data-i18n="f4t">Múltiplos Formatos</h3>
+          <p data-i18n="f4d">MP4 e MP3 em várias qualidades.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M12 2L4 11h7l-2 9 8-9h-7l2-9z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></div>
+          <h3 data-i18n="f5t">+1000 Sites</h3>
+          <p data-i18n="f5d">YouTube, Instagram, TikTok e mais.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feat-icon-wrap"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2l2 5h5l-4 3 1.5 5L11 12l-4.5 3L8 10 4 7h5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></div>
+          <h3 data-i18n="f6t">Privado</h3>
+          <p data-i18n="f6d">Arquivos deletados em 10 minutos.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="faq">
+    <div class="container">
+      <h2 class="section-title" data-i18n="faq_title">Perguntas Frequentes</h2>
+      <div class="faq-list">
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq1q">Onde o vídeo é salvo?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq1a"></p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq2q">Quais sites são suportados?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq2a"></p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq3q">Posso baixar só o áudio?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq3a"></p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq4q">O VidDrop é seguro?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq4a"></p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq5q">Funciona em celular?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq5a"></p></div>
+        </div>
+        <div class="faq-item">
+          <button class="faq-q" onclick="toggleFaq(this)"><span data-i18n="faq6q">Por que alguns vídeos falham?</span><span class="faq-arrow">+</span></button>
+          <div class="faq-a"><p data-i18n="faq6a"></p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <div class="footer-brand">
+        <a href="/" class="logo">
+          <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
+            <circle cx="11" cy="11" r="10" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M11 7v8M8 12l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          VidDrop
+        </a>
+        <p data-i18n-html="footer_desc">Baixador de vídeos gratuito.</p>
+      </div>
+      <div class="footer-links">
+        <div class="footer-col">
+          <p class="footer-col-title" data-i18n="footer_product">Produto</p>
+          <a href="#como-usar" data-i18n="nav_how">Como usar</a>
+          <a href="#faq" data-i18n="nav_faq">FAQ</a>
+        </div>
+        <div class="footer-col">
+          <p class="footer-col-title" data-i18n="footer_legal">Legal</p>
+          <a href="termos.html" data-i18n="nav_terms">Termos</a>
+          <a href="privacidade.html" data-i18n="nav_privacy">Privacidade</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="container footer-bottom-inner">
+        <p data-i18n="footer_bottom">© 2026 VidDrop · Todos os direitos reservados</p>
+        <p class="footer-credit">Criado por <span>meekz</span></p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+  <script>
+    function toggleMenu() { document.getElementById('mobileMenu').classList.toggle('open'); }
+    function clearInput() {
+      document.getElementById('urlInput').value = '';
+      document.getElementById('clearBtn').style.display = 'none';
+      document.getElementById('urlInput').focus();
+      hideAll();
+    }
+    function toggleFaq(btn) {
+      const item = btn.parentElement;
+      const isOpen = item.classList.contains('open');
+      document.querySelectorAll('.faq-item.open').forEach(i => i.classList.remove('open'));
+      if (!isOpen) item.classList.add('open');
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      const input = document.getElementById('urlInput');
+      input.addEventListener('input', () => {
+        document.getElementById('clearBtn').style.display = input.value ? 'flex' : 'none';
+      });
+      // Mobile lang switcher
+      const mob = document.getElementById('langOptionsMobile');
+      if (mob) {
+        LANG_ORDER.forEach(code => {
+          const lang = LANGS[code];
+          const btn = document.createElement('button');
+          btn.className = 'lang-option-mobile' + (code === currentLang ? ' active' : '');
+          btn.textContent = lang.name;
+          btn.onclick = () => { setLang(code); toggleMenu(); };
+          mob.appendChild(btn);
+        });
+      }
+      document.addEventListener('click', e => {
+        const sw = document.querySelector('.lang-switcher');
+        if (sw && !sw.contains(e.target)) document.getElementById('langMenu').classList.remove('open');
+      });
+    });
+  </script>
+</body>
+</html>
