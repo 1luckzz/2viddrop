@@ -26,4 +26,5 @@ RUN mkdir -p downloads
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Atualiza o yt-dlp a cada inicialização (YouTube quebra versões antigas com frequência)
+CMD ["sh", "-c", "yt-dlp -U || true; node server.js"]
