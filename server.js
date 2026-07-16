@@ -81,7 +81,7 @@ app.post('/info', (req, res) => {
 
 // ── DOWNLOAD ─────────────────────────────────────────────────
 let activeJobs = 0;
-const MAX_JOBS = 2;
+const MAX_JOBS = 1;
 
 app.post('/download', (req, res) => {
   const url      = cleanUrl(req.body.url || '');
@@ -98,7 +98,7 @@ app.post('/download', (req, res) => {
   const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
   if (activeJobs >= MAX_JOBS) {
-    send({ type:'error', message:'Servidor ocupado no momento. Tente novamente em 1 minuto.' });
+    send({ type:'error', message:'Outro download em andamento. Tente novamente em instantes.' });
     return res.end();
   }
   activeJobs++;
@@ -109,53 +109,6 @@ app.post('/download', (req, res) => {
   // HLS via yt-dlp: baixa fragmentos em paralelo (ffmpeg baixa 1 por vez, muito lento)
   runYtDlp(url, isHLS(url) && !audioOnly ? 'b' : format, audioOnly, jobId, send, res);
 });
-
-function runFfmpeg(url, jobId, send, res, format) {
-  const outFile   = path.join(DOWNLOADS_DIR, `${jobId}.mp4`);
-  const ffmpegBin = getFfmpegBin();
-  const args = [
-    '-nostdin', '-y',
-    '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
-    '-i', url, '-c', 'copy', '-bsf:a', 'aac_adtstoasc',
-    outFile,
-  ];
-
-  console.log('[ffmpeg] iniciando HLS download');
-  const proc = spawn(ffmpegBin, args, { stdio: ['ignore','pipe','pipe'] });
-  let log = '', totalSecs = 0;
-
-  const hb = setInterval(() => {
-    try {
-      if (!fs.existsSync(outFile)) return;
-      const mb = (fs.statSync(outFile).size / 1048576).toFixed(1);
-      if (parseFloat(mb) > 0) send({ type:'progress', percent:-1, status:`Baixando... ${mb} MB`, speed:null, eta:null });
-    } catch {}
-  }, 2000);
-
-  proc.stderr.on('data', d => {
-    const t = d.toString(); log += t;
-    const dm = /Duration:\s+(\d+):(\d+):(\d+)/.exec(t);
-    if (dm && !totalSecs) totalSecs = +dm[1]*3600 + +dm[2]*60 + +dm[3];
-    const tm = /time=(\d+):(\d+):(\d+)/.exec(t);
-    if (tm && totalSecs) {
-      const cur = +tm[1]*3600 + +tm[2]*60 + +tm[3];
-      send({ type:'progress', percent: Math.min(99, Math.round(cur/totalSecs*100)), status:'Baixando...', speed:null, eta:null });
-    }
-  });
-
-  proc.on('close', code => {
-    clearInterval(hb);
-    if (code !== 0 || !fs.existsSync(outFile)) {
-      console.log('[ffmpeg falhou] fallback yt-dlp');
-      send({ type:'progress', percent:0, status:'Tentando método alternativo...', speed:null, eta:null });
-      runYtDlp(url, format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b', false, jobId, send, res);
-      return;
-    }
-    finish(outFile, send, res);
-  });
-
-  req_cleanup(res, proc);
-}
 
 function runYtDlp(url, format, audioOnly, jobId, send, res) {
   const ext    = audioOnly ? '%(ext)s' : 'mp4';
@@ -196,6 +149,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   console.log('[yt-dlp] args:', args.join(' '));
 
   const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
+  req_cleanup(res, proc); // mata o yt-dlp se o usuário fechar a página
   let filename = null, errLog = '';
 
   const rePct  = /(\d+\.?\d*)%/;
@@ -212,7 +166,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
       const mb = (fs.statSync(path.join(DOWNLOADS_DIR, f[0])).size / 1048576).toFixed(1);
       if (parseFloat(mb) > 0) send({ type:'progress', percent:-1, status:`Baixando... ${mb} MB`, speed:null, eta:null });
     } catch {}
-  }, 3000);
+  }, 6000);
 
   function parse(line) {
     if (!line.trim()) return;
@@ -286,7 +240,7 @@ app.use('/files', (req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1d' }));
 
 // Limpeza a cada 1h
 setInterval(() => {
