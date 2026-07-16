@@ -82,7 +82,7 @@ app.post('/info', (req, res) => {
 // ── DOWNLOAD ─────────────────────────────────────────────────
 app.post('/download', (req, res) => {
   const url      = cleanUrl(req.body.url || '');
-  const format   = req.body.format || 'bestvideo[height<=1080]+bestaudio/best';
+  const format   = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]';
   const audioOnly = !!req.body.audioOnly;
 
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
@@ -140,7 +140,7 @@ function runFfmpeg(url, jobId, send, res, format) {
     if (code !== 0 || !fs.existsSync(outFile)) {
       console.log('[ffmpeg falhou] fallback yt-dlp');
       send({ type:'progress', percent:0, status:'Tentando método alternativo...', speed:null, eta:null });
-      runYtDlp(url, format || 'bestvideo[height<=1080]+bestaudio/best', false, jobId, send, res);
+      runYtDlp(url, format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]', false, jobId, send, res);
       return;
     }
     finish(outFile, send, res);
@@ -160,7 +160,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     '--newline',
     '--force-overwrites',
     '--ffmpeg-location', getFfmpegBin(),
-    '--concurrent-fragments', '4',
+    '--concurrent-fragments', '8',
     '-o', outTpl,
   ];
 
@@ -174,8 +174,6 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   } else {
     args.push('-f', format);
     args.push('--merge-output-format', 'mp4');
-    // Converte áudio para AAC para garantir compatibilidade com mp4
-    args.push('--postprocessor-args', 'ffmpeg:-c:a aac');
   }
   args.push(url);
 
