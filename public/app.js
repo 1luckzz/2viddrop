@@ -61,11 +61,11 @@ function renderVideoInfo(data, url) {
   tabs.innerHTML = '';
 
   const options = [
-    { label: '4K',    format: 'bestvideo[height<=2160]+bestaudio/best' },
-    { label: '1080p', format: 'bestvideo[height<=1080]+bestaudio/best' },
-    { label: '720p',  format: 'bestvideo[height<=720]+bestaudio/best'  },
-    { label: '480p',  format: 'bestvideo[height<=480]+bestaudio/best'  },
-    { label: 'MP3',   format: 'bestaudio/best', audio: true            },
+    { label: '4K',    format: 'bv*[height<=2160][ext=mp4]+ba[ext=m4a]/bv*[height<=2160]+ba/b[height<=2160]' },
+    { label: '1080p', format: 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]' },
+    { label: '720p',  format: 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]' },
+    { label: '480p',  format: 'bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480]' },
+    { label: 'MP3',   format: 'bestaudio/best', audio: true },
   ];
 
   options.forEach(({ label, format, audio }, i) => {
