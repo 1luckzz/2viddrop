@@ -106,11 +106,8 @@ app.post('/download', (req, res) => {
 
   const jobId = uuidv4();
 
-  if (isHLS(url) && !audioOnly) {
-    runFfmpeg(url, jobId, send, res, format);
-  } else {
-    runYtDlp(url, format, audioOnly, jobId, send, res);
-  }
+  // HLS via yt-dlp: baixa fragmentos em paralelo (ffmpeg baixa 1 por vez, muito lento)
+  runYtDlp(url, isHLS(url) && !audioOnly ? 'b' : format, audioOnly, jobId, send, res);
 });
 
 function runFfmpeg(url, jobId, send, res, format) {
@@ -171,6 +168,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     '--newline',
     '--force-overwrites',
     '--concurrent-fragments', '3',
+    '--downloader', 'm3u8:native',
     '-o', outTpl,
   ];
 
