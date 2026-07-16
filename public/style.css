@@ -29,21 +29,20 @@ main {
 
 /* ── título meekz em verde com efeitos ── */
 .logo {
-  font-size: 64px;
+  font-size: 45px;
   font-weight: bold;
   letter-spacing: 4px;
   color: #00ff66;
   text-shadow:
-    0 0 8px  #00ff66,
-    0 0 24px #00ff66,
-    0 0 60px rgba(0, 255, 102, 0.55);
+    0 0 4px  rgba(0, 255, 102, 0.6),
+    0 0 12px rgba(0, 255, 102, 0.35);
   animation: pulse 2.4s ease-in-out infinite;
   margin-bottom: 36px;
 }
 
 @keyframes pulse {
-  0%, 100% { text-shadow: 0 0 8px #00ff66, 0 0 24px #00ff66, 0 0 60px rgba(0,255,102,0.55); }
-  50%      { text-shadow: 0 0 4px #00ff66, 0 0 12px #00ff66, 0 0 30px rgba(0,255,102,0.3); }
+  0%, 100% { text-shadow: 0 0 4px rgba(0,255,102,0.6), 0 0 12px rgba(0,255,102,0.35); }
+  50%      { text-shadow: 0 0 2px rgba(0,255,102,0.4), 0 0 6px  rgba(0,255,102,0.2); }
 }
 
 /* ── campo + botão ── */
@@ -111,6 +110,6 @@ main {
 .hidden { display: none; }
 
 @media (max-width: 480px) {
-  .logo { font-size: 44px; }
+  .logo { font-size: 31px; }
   .box { flex-direction: column; }
 }
