@@ -167,7 +167,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     '--no-playlist',
     '--newline',
     '--force-overwrites',
-    '--concurrent-fragments', '3',
+    '--concurrent-fragments', isHLS(url) ? '8' : '3',
     '--downloader', 'm3u8:native',
     '-o', outTpl,
   ];
