@@ -80,9 +80,12 @@ app.post('/info', (req, res) => {
 });
 
 // ── DOWNLOAD ─────────────────────────────────────────────────
+let activeJobs = 0;
+const MAX_JOBS = 2;
+
 app.post('/download', (req, res) => {
   const url      = cleanUrl(req.body.url || '');
-  const format   = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]';
+  const format   = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
   const audioOnly = !!req.body.audioOnly;
 
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
@@ -93,6 +96,14 @@ app.post('/download', (req, res) => {
   res.flushHeaders();
 
   const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  if (activeJobs >= MAX_JOBS) {
+    send({ type:'error', message:'Servidor ocupado no momento. Tente novamente em 1 minuto.' });
+    return res.end();
+  }
+  activeJobs++;
+  res.on('close', () => { activeJobs = Math.max(0, activeJobs - 1); });
+
   const jobId = uuidv4();
 
   if (isHLS(url) && !audioOnly) {
@@ -140,7 +151,7 @@ function runFfmpeg(url, jobId, send, res, format) {
     if (code !== 0 || !fs.existsSync(outFile)) {
       console.log('[ffmpeg falhou] fallback yt-dlp');
       send({ type:'progress', percent:0, status:'Tentando método alternativo...', speed:null, eta:null });
-      runYtDlp(url, format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]', false, jobId, send, res);
+      runYtDlp(url, format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b', false, jobId, send, res);
       return;
     }
     finish(outFile, send, res);
@@ -159,10 +170,16 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     '--no-playlist',
     '--newline',
     '--force-overwrites',
-    '--ffmpeg-location', getFfmpegBin(),
-    '--concurrent-fragments', '8',
+    '--concurrent-fragments', '3',
     '-o', outTpl,
   ];
+
+  // Só passa --ffmpeg-location se for um caminho de arquivo real;
+  // senão o yt-dlp encontra o ffmpeg sozinho pelo PATH do sistema.
+  const ffBin = getFfmpegBin();
+  if (ffBin !== 'ffmpeg' && fs.existsSync(ffBin)) {
+    args.push('--ffmpeg-location', ffBin);
+  }
 
   // Usa cookies se disponível (para vídeos com restrição de idade)
   if (fs.existsSync(cookiesFile)) {
