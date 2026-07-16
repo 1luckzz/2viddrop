@@ -61,20 +61,19 @@ function renderVideoInfo(data, url) {
   tabs.innerHTML = '';
 
   const options = [
-    { label: '4K',    format: 'bv*[height<=2160][ext=mp4]+ba[ext=m4a]/bv*[height<=2160]+ba/b[height<=2160]' },
-    { label: '1080p', format: 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]' },
-    { label: '720p',  format: 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]' },
-    { label: '480p',  format: 'bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480]' },
+    { label: '1080p', format: 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b' },
+    { label: '720p',  format: 'bv*[height<=720][ext=mp4]+ba[ext=m4a]/bv*[height<=720]+ba/b[height<=720]/b' },
+    { label: '480p',  format: 'bv*[height<=480][ext=mp4]+ba[ext=m4a]/bv*[height<=480]+ba/b[height<=480]/b' },
     { label: 'MP3',   format: 'bestaudio/best', audio: true },
   ];
 
   options.forEach(({ label, format, audio }, i) => {
     const tab = document.createElement('button');
-    tab.className = 'format-tab' + (i === 1 ? ' active' : '');
+    tab.className = 'format-tab' + (i === 0 ? ' active' : '');
     tab.textContent = label;
     tab.dataset.format = format;
     tab.dataset.audio = audio ? '1' : '0';
-    if (i === 1) selectedFormat = format;
+    if (i === 0) selectedFormat = format;
     tab.onclick = () => {
       document.querySelectorAll('.format-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
