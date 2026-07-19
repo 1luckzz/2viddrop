@@ -41,10 +41,9 @@ function cleanUrl(raw) {
 function sanitizeFilename(name) {
   if (!name || name === 'Stream HLS') return 'video';
   return name
-    .replace(/[/\\:*?"<>|]/g, '_')
-    .replace(/\s+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_|_$/g, '')
+    .replace(/[/\\:*?"<>|]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
     .slice(0, 80) || 'video';
 }
 
