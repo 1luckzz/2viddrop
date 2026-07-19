@@ -2,6 +2,11 @@ const API = '';
 let selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
 let hasRealProgress = false;
 
+// Wrapper seguro para traduções — funciona mesmo se i18n.js não carregou ainda
+function safeT(key, fallback) {
+  try { return (typeof t === 'function') ? t(key) : fallback; } catch { return fallback; }
+}
+
 function cleanUrl(url) {
   try {
     const u = new URL(url);
@@ -20,7 +25,7 @@ async function fetchInfo() {
   const btn = document.getElementById('fetchBtn');
   const btnText = document.getElementById('fetchBtnText');
   btn.disabled = true;
-  btnText.textContent = t('btn_searching');
+  btnText.textContent = safeT('btn_searching', 'Buscando...');
   hideAll();
 
   try {
@@ -36,7 +41,7 @@ async function fetchInfo() {
     showError(err.message);
   } finally {
     btn.disabled = false;
-    btnText.textContent = t('btn_search');
+    btnText.textContent = safeT('btn_search', 'Baixar');
   }
 }
 
@@ -96,7 +101,7 @@ async function startDownload() {
   hasRealProgress = false;
   hideAll();
   show('progressSection');
-  setProgress(0, t('preparing'));
+  setProgress(0, safeT('preparing', 'Preparando...'));
 
   try {
     const res = await fetch(`${API}/download`, {
@@ -133,8 +138,9 @@ async function startDownload() {
 
 function handleEvent(evt) {
   if (evt.type === 'stream') {
-    setProgress(100, t('done'));
-    document.getElementById('progressSpeed').textContent = '';
+    setProgress(100, safeT('done', 'Concluído'));
+    const sp = document.getElementById('progressSpeed');
+    if (sp) sp.textContent = '';
     setTimeout(() => {
       const a = document.createElement('a');
       a.href = evt.streamUrl;
@@ -152,12 +158,13 @@ function handleEvent(evt) {
     const pct = (evt.percent !== null && evt.percent >= 0) ? evt.percent : null;
     setProgress(pct, evt.status);
     const sp = document.getElementById('progressSpeed');
-    sp.textContent = evt.speed ? `${evt.speed}${evt.eta ? ' · ETA ' + evt.eta : ''}` : '';
+    if (sp) sp.textContent = evt.speed ? `${evt.speed}${evt.eta ? ' · ETA ' + evt.eta : ''}` : '';
   }
 
   if (evt.type === 'done') {
-    setProgress(100, t('done'));
-    document.getElementById('progressSpeed').textContent = '';
+    setProgress(100, safeT('done', 'Concluído'));
+    const sp = document.getElementById('progressSpeed');
+    if (sp) sp.textContent = '';
     setTimeout(() => triggerDownload(evt.filename, evt.url), 400);
   }
 
@@ -179,11 +186,9 @@ function triggerDownload(filename, fileUrl) {
 function setProgress(pct, text) {
   const fill  = document.getElementById('progressBar');
   const pctEl = document.getElementById('progressPct');
-  if (pct !== null && fill && pctEl) {
-    fill.style.width = pct + '%';
-    pctEl.textContent = Math.round(pct) + '%';
-  }
   const textEl = document.getElementById('progressText');
+  if (pct !== null && fill) fill.style.width = pct + '%';
+  if (pct !== null && pctEl) pctEl.textContent = Math.round(pct) + '%';
   if (textEl) textEl.textContent = text;
 }
 
@@ -193,7 +198,6 @@ function showError(msg) {
   show('errorBox');
 }
 
-// Versão segura — não quebra se o elemento não existir
 function show(id) {
   const el = document.getElementById(id);
   if (el) el.classList.remove('hidden');
