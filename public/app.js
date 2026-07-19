@@ -3,10 +3,6 @@ let selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
 let pageTitle = '';
 let resolvedM3u8 = '';
 
-function safeT(key, fallback) {
-  try { return (typeof t === 'function') ? t(key) : fallback; } catch { return fallback; }
-}
-
 function cleanUrl(url) {
   try {
     const u = new URL(url);
@@ -20,8 +16,39 @@ function isM3u8(url) {
 }
 
 function isPageUrl(url) {
-  // É uma página se não for m3u8 e tiver um domínio com path
   return !isM3u8(url) && /^https?:\/\/.+\/.+/.test(url);
+}
+
+function showProgress() {
+  const el = document.getElementById('progress');
+  if (el) el.classList.remove('hidden');
+  const err = document.getElementById('error');
+  if (err) err.classList.add('hidden');
+}
+
+function hideProgress() {
+  const el = document.getElementById('progress');
+  if (el) el.classList.add('hidden');
+}
+
+function setProgress(pct, status) {
+  const bar    = document.getElementById('bar');
+  const pctEl  = document.getElementById('pct');
+  const statEl = document.getElementById('status');
+  if (bar && pct !== null)   bar.style.width = pct + '%';
+  if (pctEl && pct !== null) pctEl.textContent = Math.round(pct) + '%';
+  if (statEl) statEl.textContent = status || '';
+}
+
+function setSpeed(text) {
+  const el = document.getElementById('speed');
+  if (el) el.textContent = text || '';
+}
+
+function showError(msg) {
+  hideProgress();
+  const el = document.getElementById('error');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
 
 async function startDownload() {
@@ -122,7 +149,6 @@ function handleEvent(evt) {
   if (evt.type === 'done') {
     setProgress(100, 'Concluído!');
     setSpeed('');
-    // Reset para próximo download
     resolvedM3u8 = '';
     pageTitle = '';
     setTimeout(() => {
@@ -143,43 +169,10 @@ function handleEvent(evt) {
   }
 }
 
-function showProgress() {
-  const el = document.getElementById('progress');
-  if (el) el.classList.remove('hidden');
-  const err = document.getElementById('error');
-  if (err) err.classList.add('hidden');
-}
-
-function hideProgress() {
-  const el = document.getElementById('progress');
-  if (el) el.classList.add('hidden');
-}
-
-function setProgress(pct, status) {
-  const bar    = document.getElementById('bar');
-  const pctEl  = document.getElementById('pct');
-  const statEl = document.getElementById('status');
-  if (bar && pct !== null)    bar.style.width = pct + '%';
-  if (pctEl && pct !== null)  pctEl.textContent = Math.round(pct) + '%';
-  if (statEl) statEl.textContent = status || '';
-}
-
-function setSpeed(text) {
-  const el = document.getElementById('speed');
-  if (el) el.textContent = text || '';
-}
-
-function showError(msg) {
-  hideProgress();
-  const el = document.getElementById('error');
-  if (el) { el.textContent = msg; el.classList.remove('hidden'); }
-}
-
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('urlInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') startDownload();
   });
-  // Reset quando URL muda
   document.getElementById('urlInput').addEventListener('input', () => {
     pageTitle = '';
     resolvedM3u8 = '';
