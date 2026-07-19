@@ -78,47 +78,7 @@ app.post('/info', (req, res) => {
   });
 });
 
-// ── STREAM HLS → MP4 via GET (ffmpeg pipe direto pro browser) ──
-app.get('/stream', (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.status(400).send('URL obrigatória');
-
-  console.log(`[stream] ${url.slice(0, 80)}...`);
-
-  const ffmpeg = getFfmpegBin();
-  const args = [
-    '-nostdin', '-y',
-    '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
-    '-i', url,
-    '-c', 'copy',
-    '-movflags', 'frag_keyframe+empty_moov',
-    '-f', 'mp4',
-    'pipe:1',
-  ];
-
-  const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Content-Disposition', `attachment; filename="video_${Date.now()}.mp4"`);
-
-  proc.stdout.pipe(res);
-
-  let started = false;
-  proc.stderr.on('data', d => {
-    const line = d.toString();
-    if (!started && line.includes('frame=')) started = true;
-    if (line.toLowerCase().includes('error')) console.error('[stream err]', line.trim());
-  });
-
-  proc.on('close', code => {
-    console.log(`[stream] done code=${code}`);
-    try { res.end(); } catch {}
-  });
-
-  req.on('close', () => { try { proc.kill('SIGTERM'); } catch {} });
-});
-
-// ── DOWNLOAD (SSE para todos os casos) ───────────────────────
+// ── DOWNLOAD ─────────────────────────────────────────────────
 app.post('/download', (req, res) => {
   const url       = cleanUrl(req.body.url || '');
   const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
@@ -131,19 +91,89 @@ app.post('/download', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-
-  // HLS → manda evento com URL do stream, frontend baixa direto
-  if (isHLS(url) && !audioOnly) {
-    const streamUrl = `/stream?url=${encodeURIComponent(url)}`;
-    send({ type: 'stream', streamUrl });
-    return res.end();
-  }
-
+  const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   const jobId = uuidv4();
-  runYtDlp(url, format, audioOnly, jobId, send, res);
+
+  if (isHLS(url) && !audioOnly) {
+    runFfmpegHLS(url, jobId, send, res);
+  } else {
+    runYtDlp(url, format, audioOnly, jobId, send, res);
+  }
 });
 
+// ── HLS via ffmpeg (salva em disco, serve depois) ─────────────
+function runFfmpegHLS(url, jobId, send, res) {
+  const outFile   = path.join(DOWNLOADS_DIR, `${jobId}_${Date.now()}.mp4`);
+  const ffmpegBin = getFfmpegBin();
+
+  const args = [
+    '-nostdin', '-y',
+    '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
+    '-headers', 'Accept: */*\r\nAccept-Language: pt-BR,pt;q=0.9\r\n',
+    '-i', url,
+    '-c', 'copy',
+    '-bsf:a', 'aac_adtstoasc',
+    outFile,
+  ];
+
+  console.log(`[ffmpeg HLS] iniciando job ${jobId.slice(0,8)}`);
+  const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let totalSecs = 0;
+  let lastPct   = 0;
+
+  // Heartbeat — mostra MB em disco enquanto ffmpeg trabalha
+  const hb = setInterval(() => {
+    try {
+      if (!fs.existsSync(outFile)) return;
+      const mb = (fs.statSync(outFile).size / 1048576).toFixed(1);
+      if (parseFloat(mb) > 0) {
+        send({ type: 'progress', percent: lastPct, status: `Baixando... ${mb} MB`, speed: null, eta: null });
+      }
+    } catch {}
+  }, 3000);
+
+  proc.stderr.on('data', chunk => {
+    const text = chunk.toString();
+
+    // Pega duração total
+    const dm = /Duration:\s+(\d+):(\d+):(\d+)/.exec(text);
+    if (dm && !totalSecs) {
+      totalSecs = +dm[1]*3600 + +dm[2]*60 + +dm[3];
+    }
+
+    // Progresso por tempo
+    const tm = /time=(\d+):(\d+):(\d+)/.exec(text);
+    if (tm && totalSecs > 0) {
+      const cur = +tm[1]*3600 + +tm[2]*60 + +tm[3];
+      lastPct = Math.min(99, Math.round((cur / totalSecs) * 100));
+      const remaining = totalSecs - cur;
+      const eta = remaining > 0 ? `${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}` : null;
+      send({ type: 'progress', percent: lastPct, status: 'Baixando...', speed: null, eta });
+    }
+  });
+
+  proc.on('close', code => {
+    clearInterval(hb);
+
+    if (code !== 0 || !fs.existsSync(outFile)) {
+      // Fallback para yt-dlp se ffmpeg falhar
+      console.log('[ffmpeg HLS] falhou, tentando yt-dlp...');
+      send({ type: 'progress', percent: 0, status: 'Tentando método alternativo...', speed: null, eta: null });
+      runYtDlp(url.replace(/\?.*/, ''), 'b', false, jobId, send, res);
+      return;
+    }
+
+    const basename = path.basename(outFile);
+    send({ type: 'done', filename: basename, url: `/files/${encodeURIComponent(basename)}` });
+    res.end();
+    setTimeout(() => { try { fs.unlinkSync(outFile); } catch {} }, 10*60*1000);
+  });
+
+  res.on('close', () => { clearInterval(hb); try { proc.kill('SIGTERM'); } catch {} });
+}
+
+// ── yt-dlp (para não-HLS) ─────────────────────────────────────
 function runYtDlp(url, format, audioOnly, jobId, send, res) {
   const ext    = audioOnly ? '%(ext)s' : 'mp4';
   const outTpl = path.join(DOWNLOADS_DIR, `${jobId}_%(epoch)s.${ext}`);
@@ -165,6 +195,8 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     args.push('--merge-output-format', 'mp4');
   }
   args.push(url);
+
+  console.log(`[yt-dlp] job ${jobId.slice(0,8)} formato: ${format}`);
 
   const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
   res.on('close', () => { try { proc.kill(); } catch {} });
