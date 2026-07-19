@@ -60,6 +60,68 @@ app.get('/test', (req, res) => {
   });
 });
 
+
+// ── EXTRACT (pega m3u8 e título de uma URL de página) ────────
+app.post('/extract', async (req, res) => {
+  const pageUrl = req.body.url || '';
+  if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  try {
+    const https  = require('https');
+    const http   = require('http');
+    const client = pageUrl.startsWith('https') ? https : http;
+
+    const html = await new Promise((resolve, reject) => {
+      const opts = new URL(pageUrl);
+      const options = {
+        hostname: opts.hostname,
+        path: opts.pathname + opts.search,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'pt-BR,pt;q=0.9',
+        }
+      };
+      client.get(options, r => {
+        let data = '';
+        r.on('data', d => data += d);
+        r.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+
+    // Extrai título do og:title ou title
+    let title = '';
+    const ogMatch  = /og:title[^>]*content="([^"]+)"/i.exec(html)
+                  || /content="([^"]+)"[^>]*og:title/i.exec(html);
+    const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+    if (ogMatch)    title = ogMatch[1];
+    else if (titleMatch) title = titleMatch[1];
+    // Remove sufixo do site
+    title = title.replace(/ [-|] [^-|]+$/, '').trim();
+
+    // Extrai UUID do vazounudes (padrão do iframe)
+    const uuidMatch = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
+    if (!uuidMatch) {
+      // Tenta extrair m3u8 direto do HTML
+      const m3u8Match = /https?:\/\/[^"' ]+\.m3u8[^"' ]*/i.exec(html);
+      if (m3u8Match) {
+        return res.json({ m3u8: m3u8Match[0], title: title || 'video' });
+      }
+      return res.status(400).json({ error: 'Não foi possível encontrar o vídeo nesta página.' });
+    }
+
+    const uuid = uuidMatch[0];
+    // Tenta qualidades em ordem decrescente
+    const qualities = ['1080p', '720p', '480p', '360p'];
+    const m3u8 = `https://vazounudes.net/hls/${uuid}/480p/video.m3u8`;
+
+    res.json({ m3u8, title: title || 'video', uuid });
+  } catch (err) {
+    console.error('[extract]', err.message);
+    res.status(500).json({ error: 'Erro ao processar a página: ' + err.message });
+  }
+});
+
 // ── INFO ─────────────────────────────────────────────────────
 app.post('/info', (req, res) => {
   const url = cleanUrl(req.body.url || '');
