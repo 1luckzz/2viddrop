@@ -97,33 +97,6 @@ async function startDownload() {
   setProgress(0, t('preparing'));
 
   try {
-    // Passo 1: tenta pegar URL direta (download no cliente, sem sobrecarregar servidor)
-    setProgress(0, 'Obtendo link...');
-    const urlRes = await fetch(`${API}/get-url`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, format: selectedFormat, audioOnly: isAudio }),
-    });
-
-    const urlData = await urlRes.json();
-
-    if (!urlData.needsProxy && urlData.directUrl) {
-      // Download direto no cliente — máxima velocidade, zero CPU do servidor
-      setProgress(100, t('done'));
-      setTimeout(() => {
-        const a = document.createElement('a');
-        a.href = urlData.directUrl;
-        a.download = urlData.filename || 'video.mp4';
-        a.target = '_blank';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }, 300);
-      return;
-    }
-
-    // Passo 2: fallback — download no servidor (vídeo+áudio separados que precisam de merge)
-    setProgress(0, 'Processando...');
     const res = await fetch(`${API}/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -135,6 +108,26 @@ async function startDownload() {
       throw new Error(err.error || 'Falha no download.');
     }
 
+    // Verifica se é stream HLS (resposta JSON simples, não SSE)
+    const contentType = res.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await res.json();
+      if (data.type === 'stream' && data.streamUrl) {
+        // HLS: dispara download direto via link — browser baixa do servidor via pipe
+        setProgress(100, t('done'));
+        setTimeout(() => {
+          const a = document.createElement('a');
+          a.href = data.streamUrl;
+          a.download = `video_${Date.now()}.mp4`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        }, 300);
+        return;
+      }
+    }
+
+    // SSE normal para yt-dlp
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
