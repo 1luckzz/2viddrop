@@ -40,7 +40,7 @@ async function fetchInfo() {
   }
 }
 
-function renderVideoInfo(data, url) {
+function renderVideoInfo(data) {
   const thumb = document.getElementById('thumbnail');
   if (data.thumbnail) {
     thumb.src = data.thumbnail;
@@ -108,26 +108,6 @@ async function startDownload() {
       throw new Error(err.error || 'Falha no download.');
     }
 
-    // Verifica se é stream HLS (resposta JSON simples, não SSE)
-    const contentType = res.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      const data = await res.json();
-      if (data.type === 'stream' && data.streamUrl) {
-        // HLS: dispara download direto via link — browser baixa do servidor via pipe
-        setProgress(100, t('done'));
-        setTimeout(() => {
-          const a = document.createElement('a');
-          a.href = data.streamUrl;
-          a.download = `video_${Date.now()}.mp4`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-        }, 300);
-        return;
-      }
-    }
-
-    // SSE normal para yt-dlp
     const reader  = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -150,6 +130,21 @@ async function startDownload() {
 }
 
 function handleEvent(evt) {
+  // HLS stream — dispara download direto pelo link /stream
+  if (evt.type === 'stream') {
+    setProgress(100, t('done'));
+    document.getElementById('progressSpeed').textContent = '';
+    setTimeout(() => {
+      const a = document.createElement('a');
+      a.href = evt.streamUrl;
+      a.download = `video_${Date.now()}.mp4`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }, 300);
+    return;
+  }
+
   if (evt.type === 'progress') {
     if (evt.percent >= 0) hasRealProgress = true;
     if (evt.percent < 0 && hasRealProgress) return;
@@ -158,11 +153,13 @@ function handleEvent(evt) {
     const sp = document.getElementById('progressSpeed');
     sp.textContent = evt.speed ? `${evt.speed}${evt.eta ? ' · ETA ' + evt.eta : ''}` : '';
   }
+
   if (evt.type === 'done') {
     setProgress(100, t('done'));
     document.getElementById('progressSpeed').textContent = '';
     setTimeout(() => triggerDownload(evt.filename, evt.url), 400);
   }
+
   if (evt.type === 'error') {
     hide('progressSection');
     showError(evt.message);
