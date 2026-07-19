@@ -3,7 +3,6 @@ const cors      = require('cors');
 const path      = require('path');
 const fs        = require('fs');
 const { spawn } = require('child_process');
-const { v4: uuidv4 } = require('uuid');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -18,12 +17,6 @@ function getYtDlpBin() {
   const local = path.join(__dirname, 'yt-dlp.exe');
   if (fs.existsSync(local)) return local;
   return process.env.YTDLP_BIN || 'yt-dlp';
-}
-
-function getFfmpegBin() {
-  const local = path.join(__dirname, 'ffmpeg.exe');
-  if (fs.existsSync(local)) return local;
-  return process.env.FFMPEG_BIN || 'ffmpeg';
 }
 
 function isHLS(url) {
@@ -41,13 +34,12 @@ function cleanUrl(raw) {
 // ── DIAGNÓSTICO ──────────────────────────────────────────────
 app.get('/test', (req, res) => {
   const ytdlp = getYtDlpBin();
-  const args  = ['--version'];
   let out = '', err = '';
-  const proc = spawn(ytdlp, args, { stdio: ['ignore','pipe','pipe'] });
+  const proc = spawn(ytdlp, ['--version'], { stdio: ['ignore','pipe','pipe'] });
   proc.stdout.on('data', d => out += d);
   proc.stderr.on('data', d => err += d);
   proc.on('close', code => {
-    res.json({ ytdlp, ffmpeg: getFfmpegBin(), version: out.trim(), code, err: err.trim() });
+    res.json({ ytdlp, version: out.trim(), code, err: err.trim() });
   });
 });
 
@@ -79,8 +71,78 @@ app.post('/info', (req, res) => {
   });
 });
 
-// ── DOWNLOAD ─────────────────────────────────────────────────
-// Sem limite de downloads simultâneos — cada jobId é isolado
+// ── GET URL DIRETA (sem baixar no servidor) ──────────────────
+// O servidor só extrai a URL de download e retorna pro cliente
+// O cliente baixa direto da fonte — zero CPU/RAM do servidor
+app.post('/get-url', (req, res) => {
+  const url       = cleanUrl(req.body.url || '');
+  const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
+  const audioOnly = !!req.body.audioOnly;
+
+  if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  // Para HLS direto, retorna a URL como está (o browser baixa direto)
+  if (isHLS(url) && !audioOnly) {
+    return res.json({ 
+      directUrl: url, 
+      filename: `video_${Date.now()}.mp4`,
+      needsProxy: false 
+    });
+  }
+
+  const cookiesFile = path.join(__dirname, 'cookies.txt');
+  const args = [
+    '--get-url',
+    '--no-playlist',
+    '--no-warnings',
+  ];
+
+  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+
+  if (audioOnly) {
+    args.push('-f', 'bestaudio');
+  } else {
+    // Para formatos que precisam de merge (vídeo+áudio separados),
+    // pega apenas o melhor formato pré-merged que o browser consegue baixar
+    args.push('-f', 'b[ext=mp4]/b/18/22');
+  }
+
+  args.push(url);
+
+  console.log('[get-url] args:', args.join(' '));
+
+  let out = '', err = '';
+  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
+  proc.stdout.on('data', d => out += d);
+  proc.stderr.on('data', d => err += d);
+
+  proc.on('close', code => {
+    const urls = out.trim().split('\n').filter(Boolean);
+
+    if (code !== 0 || !urls.length) {
+      // Fallback: tenta baixar no servidor se não conseguir URL direta
+      console.log('[get-url] fallback para download no servidor');
+      return res.json({ needsProxy: true });
+    }
+
+    // Se retornou 2 URLs (vídeo + áudio separados), precisa do servidor para merge
+    if (urls.length > 1) {
+      console.log('[get-url] vídeo+áudio separados, usando proxy');
+      return res.json({ needsProxy: true });
+    }
+
+    // URL única — cliente baixa direto!
+    res.json({
+      directUrl: urls[0],
+      filename: `video_${Date.now()}.mp4`,
+      needsProxy: false
+    });
+  });
+});
+
+// ── DOWNLOAD NO SERVIDOR (fallback para quando não tem URL direta) ─
+const { v4: uuidv4 } = require('uuid');
+
 app.post('/download', (req, res) => {
   const url       = cleanUrl(req.body.url || '');
   const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
@@ -106,22 +168,12 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
 
   const cookiesFile = path.join(__dirname, 'cookies.txt');
   const args = [
-    '--no-playlist',
-    '--newline',
-    '--force-overwrites',
-    '--concurrent-fragments', isHLS(url) ? '8' : '3',
-    '--downloader', 'm3u8:native',
+    '--no-playlist', '--newline', '--force-overwrites',
+    '--concurrent-fragments', '4',
     '-o', outTpl,
   ];
 
-  const ffBin = getFfmpegBin();
-  if (ffBin !== 'ffmpeg' && fs.existsSync(ffBin)) {
-    args.push('--ffmpeg-location', ffBin);
-  }
-
-  if (fs.existsSync(cookiesFile)) {
-    args.push('--cookies', cookiesFile);
-  }
+  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
 
   if (audioOnly) {
     args.push('-x', '--audio-format', 'mp3');
@@ -131,18 +183,15 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   }
   args.push(url);
 
-  console.log(`[job ${jobId.slice(0,8)}] formato:`, format, '| audioOnly:', audioOnly);
-
   const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
-  req_cleanup(res, proc);
-  let filename = null, errLog = '';
+  res.on('close', () => { try { proc.kill(); } catch {} });
 
-  const rePct     = /(\d+\.?\d*)%/;
-  const reSpd     = /(\d+\.?\d*\s*[KMGkmg]i?B\/s)/;
-  const reEta     = /ETA\s+([\d:]+)/;
-  const reDest    = /Destination:\s+(.+)/;
-  const reFrag    = /frag\s+(\d+)\/(\d+)/i;
-  const reAlready = /already been downloaded/;
+  let filename = null, errLog = '';
+  const rePct  = /(\d+\.?\d*)%/;
+  const reSpd  = /(\d+\.?\d*\s*[KMGkmg]i?B\/s)/;
+  const reEta  = /ETA\s+([\d:]+)/;
+  const reDest = /Destination:\s+(.+)/;
+  const reFrag = /frag\s+(\d+)\/(\d+)/i;
 
   const hb = setInterval(() => {
     try {
@@ -157,18 +206,12 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     if (!line.trim()) return;
     const dm = reDest.exec(line);
     if (dm) filename = dm[1].trim();
-
-    if (reAlready.test(line) && filename) {
-      clearInterval(hb); finish(filename, send, res); proc.kill(); return;
-    }
-
     const pm = rePct.exec(line);
     if (pm) {
       send({ type:'progress', percent: parseFloat(pm[1]), status:'Baixando...',
         speed: (reSpd.exec(line)||[])[1]||null, eta: (reEta.exec(line)||[])[1]||null });
       return;
     }
-
     const fm = reFrag.exec(line);
     if (fm) {
       const [,c,t] = fm;
@@ -177,17 +220,12 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   }
 
   proc.stdout.on('data', d => d.toString().split('\n').forEach(parse));
-  proc.stderr.on('data', d => {
-    const t = d.toString(); errLog += t;
-    t.split('\n').forEach(l => { if(l) console.error(`[job ${jobId.slice(0,8)}]`, l); parse(l); });
-  });
+  proc.stderr.on('data', d => { const t = d.toString(); errLog += t; t.split('\n').forEach(parse); });
 
   proc.on('close', code => {
     clearInterval(hb);
     if (code !== 0) {
-      const msg = errLog.split('\n')
-        .filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]'))
-        .pop() || 'Falha no download.';
+      const msg = errLog.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]')).pop() || 'Falha no download.';
       send({ type:'error', message: msg.trim() });
       return res.end();
     }
@@ -205,19 +243,11 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
       return res.end();
     }
 
-    finish(filename, send, res);
+    const basename = path.basename(filename);
+    send({ type:'done', filename: basename, url:`/files/${encodeURIComponent(basename)}` });
+    res.end();
+    setTimeout(() => { try { fs.unlinkSync(filename); } catch {} }, 10*60*1000);
   });
-}
-
-function finish(filePath, send, res) {
-  const basename = path.basename(filePath);
-  send({ type:'done', filename: basename, url:`/files/${encodeURIComponent(basename)}` });
-  res.end();
-  setTimeout(() => { try { fs.unlinkSync(filePath); } catch {} }, 10*60*1000);
-}
-
-function req_cleanup(res, proc) {
-  res.on('close', () => { try { proc.kill(); } catch {} });
 }
 
 // ── ARQUIVOS ─────────────────────────────────────────────────
@@ -229,7 +259,6 @@ app.use('/files', (req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1d' }));
 
-// Limpeza a cada 1h
 setInterval(() => {
   try {
     fs.readdirSync(DOWNLOADS_DIR).forEach(f => {
@@ -242,6 +271,5 @@ setInterval(() => {
 app.listen(PORT, () => {
   console.log(`\n🟢 VidDrop rodando em http://localhost:${PORT}`);
   console.log(`📁 Downloads: ${DOWNLOADS_DIR}`);
-  console.log(`🔧 yt-dlp:   ${getYtDlpBin()}`);
-  console.log(`🎞  ffmpeg:   ${getFfmpegBin()}\n`);
+  console.log(`🔧 yt-dlp:   ${getYtDlpBin()}\n`);
 });
