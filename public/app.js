@@ -108,7 +108,7 @@ function handleEvent(evt) {
     const pct = (typeof evt.percent === 'number' && evt.percent >= 0) ? evt.percent : null;
     setProgress(pct, evt.status || 'Baixando...');
     if (evt.speed || evt.eta) {
-      setSpeed((evt.speed || '') + (evt.eta ? ' · ETA ' + evt.eta : ''));
+      setSpeed(evt.speed || '');
     } else {
       setSpeed('');
     }
