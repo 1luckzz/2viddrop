@@ -80,12 +80,10 @@ app.post('/info', (req, res) => {
 });
 
 // ── DOWNLOAD ─────────────────────────────────────────────────
-let activeJobs = 0;
-const MAX_JOBS = 1;
-
+// Sem limite de downloads simultâneos — cada jobId é isolado
 app.post('/download', (req, res) => {
-  const url      = cleanUrl(req.body.url || '');
-  const format   = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
+  const url       = cleanUrl(req.body.url || '');
+  const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
   const audioOnly = !!req.body.audioOnly;
 
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
@@ -95,18 +93,9 @@ app.post('/download', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-
-  if (activeJobs >= MAX_JOBS) {
-    send({ type:'error', message:'Outro download em andamento. Tente novamente em instantes.' });
-    return res.end();
-  }
-  activeJobs++;
-  res.on('close', () => { activeJobs = Math.max(0, activeJobs - 1); });
-
+  const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   const jobId = uuidv4();
 
-  // HLS via yt-dlp: baixa fragmentos em paralelo (ffmpeg baixa 1 por vez, muito lento)
   runYtDlp(url, isHLS(url) && !audioOnly ? 'b' : format, audioOnly, jobId, send, res);
 });
 
@@ -125,14 +114,11 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
     '-o', outTpl,
   ];
 
-  // Só passa --ffmpeg-location se for um caminho de arquivo real;
-  // senão o yt-dlp encontra o ffmpeg sozinho pelo PATH do sistema.
   const ffBin = getFfmpegBin();
   if (ffBin !== 'ffmpeg' && fs.existsSync(ffBin)) {
     args.push('--ffmpeg-location', ffBin);
   }
 
-  // Usa cookies se disponível (para vídeos com restrição de idade)
   if (fs.existsSync(cookiesFile)) {
     args.push('--cookies', cookiesFile);
   }
@@ -145,18 +131,17 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   }
   args.push(url);
 
-  console.log('[yt-dlp] formato:', format, '| audioOnly:', audioOnly);
-  console.log('[yt-dlp] args:', args.join(' '));
+  console.log(`[job ${jobId.slice(0,8)}] formato:`, format, '| audioOnly:', audioOnly);
 
   const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
-  req_cleanup(res, proc); // mata o yt-dlp se o usuário fechar a página
+  req_cleanup(res, proc);
   let filename = null, errLog = '';
 
-  const rePct  = /(\d+\.?\d*)%/;
-  const reSpd  = /(\d+\.?\d*\s*[KMGkmg]i?B\/s)/;
-  const reEta  = /ETA\s+([\d:]+)/;
-  const reDest = /Destination:\s+(.+)/;
-  const reFrag = /frag\s+(\d+)\/(\d+)/i;
+  const rePct     = /(\d+\.?\d*)%/;
+  const reSpd     = /(\d+\.?\d*\s*[KMGkmg]i?B\/s)/;
+  const reEta     = /ETA\s+([\d:]+)/;
+  const reDest    = /Destination:\s+(.+)/;
+  const reFrag    = /frag\s+(\d+)\/(\d+)/i;
   const reAlready = /already been downloaded/;
 
   const hb = setInterval(() => {
@@ -194,13 +179,15 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   proc.stdout.on('data', d => d.toString().split('\n').forEach(parse));
   proc.stderr.on('data', d => {
     const t = d.toString(); errLog += t;
-    t.split('\n').forEach(l => { if(l) console.error('[yt-dlp stderr]', l); parse(l); });
+    t.split('\n').forEach(l => { if(l) console.error(`[job ${jobId.slice(0,8)}]`, l); parse(l); });
   });
 
   proc.on('close', code => {
     clearInterval(hb);
     if (code !== 0) {
-      const msg = errLog.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]')).pop() || 'Falha no download.';
+      const msg = errLog.split('\n')
+        .filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]'))
+        .pop() || 'Falha no download.';
       send({ type:'error', message: msg.trim() });
       return res.end();
     }
