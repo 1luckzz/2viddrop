@@ -1,5 +1,6 @@
 const API = '';
 let selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
+let pageTitle = '';
 
 function cleanUrl(url) {
   try {
@@ -138,5 +139,8 @@ function handleEvent(evt) {
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('urlInput').addEventListener('keydown', e => {
     if (e.key === 'Enter') startDownload();
+  });
+  document.getElementById('urlInput').addEventListener('input', () => {
+    pageTitle = ''; // reset title when URL changes
   });
 });
