@@ -78,54 +78,47 @@ app.post('/info', (req, res) => {
   });
 });
 
-// ── STREAM HLS → MP4 (pipe direto, sem salvar em disco) ──────
-// ffmpeg lê o m3u8 e faz pipe do MP4 direto para o browser
-// Cada request é independente — múltiplos simultâneos funcionam
+// ── STREAM HLS → MP4 via GET (ffmpeg pipe direto pro browser) ──
 app.get('/stream', (req, res) => {
   const url = req.query.url;
   if (!url) return res.status(400).send('URL obrigatória');
 
+  console.log(`[stream] ${url.slice(0, 80)}...`);
+
   const ffmpeg = getFfmpegBin();
   const args = [
-    '-nostdin',
+    '-nostdin', '-y',
     '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
     '-i', url,
-    '-c', 'copy',           // sem re-encode — rápido, leve
-    '-movflags', 'frag_keyframe+empty_moov+faststart',  // MP4 streamável
+    '-c', 'copy',
+    '-movflags', 'frag_keyframe+empty_moov',
     '-f', 'mp4',
-    'pipe:1',               // output direto para stdout
+    'pipe:1',
   ];
-
-  console.log(`[stream] iniciando HLS pipe: ${url.slice(0, 60)}...`);
 
   const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `attachment; filename="video_${Date.now()}.mp4"`);
-  res.setHeader('Transfer-Encoding', 'chunked');
 
   proc.stdout.pipe(res);
 
+  let started = false;
   proc.stderr.on('data', d => {
-    // Só loga erros relevantes, não o progresso normal do ffmpeg
     const line = d.toString();
-    if (line.includes('Error') || line.includes('error')) {
-      console.error('[stream ffmpeg]', line.trim());
-    }
+    if (!started && line.includes('frame=')) started = true;
+    if (line.toLowerCase().includes('error')) console.error('[stream err]', line.trim());
   });
 
   proc.on('close', code => {
-    console.log(`[stream] finalizado com código ${code}`);
-    if (!res.headersSent) res.end();
+    console.log(`[stream] done code=${code}`);
+    try { res.end(); } catch {}
   });
 
-  // Se o cliente cancelar, mata o ffmpeg
-  req.on('close', () => {
-    try { proc.kill('SIGTERM'); } catch {}
-  });
+  req.on('close', () => { try { proc.kill('SIGTERM'); } catch {} });
 });
 
-// ── DOWNLOAD (para não-HLS via yt-dlp) ───────────────────────
+// ── DOWNLOAD (SSE para todos os casos) ───────────────────────
 app.post('/download', (req, res) => {
   const url       = cleanUrl(req.body.url || '');
   const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
@@ -133,22 +126,21 @@ app.post('/download', (req, res) => {
 
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
 
-  // HLS → redireciona para o stream pipe
-  if (isHLS(url) && !audioOnly) {
-    return res.json({ 
-      type: 'stream',
-      streamUrl: `/stream?url=${encodeURIComponent(url)}` 
-    });
-  }
-
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-  const jobId = uuidv4();
+  const send = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
+  // HLS → manda evento com URL do stream, frontend baixa direto
+  if (isHLS(url) && !audioOnly) {
+    const streamUrl = `/stream?url=${encodeURIComponent(url)}`;
+    send({ type: 'stream', streamUrl });
+    return res.end();
+  }
+
+  const jobId = uuidv4();
   runYtDlp(url, format, audioOnly, jobId, send, res);
 });
 
