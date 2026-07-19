@@ -39,5 +39,280 @@ function cleanUrl(raw) {
 }
 
 function sanitizeFilename(name) {
-  return (name || 'video')
-    .replace(/[<>:"/\\|?*
+  if (!name || name === 'Stream HLS') return 'video';
+  return name
+    .replace(/[/\\:*?"<>|]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 80) || 'video';
+}
+
+// ── DIAGNÓSTICO ──────────────────────────────────────────────
+app.get('/test', (req, res) => {
+  const ytdlp = getYtDlpBin();
+  let out = '', err = '';
+  const proc = spawn(ytdlp, ['--version'], { stdio: ['ignore','pipe','pipe'] });
+  proc.stdout.on('data', d => out += d);
+  proc.stderr.on('data', d => err += d);
+  proc.on('close', code => {
+    res.json({ ytdlp, ffmpeg: getFfmpegBin(), version: out.trim(), code, err: err.trim() });
+  });
+});
+
+// ── INFO ─────────────────────────────────────────────────────
+app.post('/info', (req, res) => {
+  const url = cleanUrl(req.body.url || '');
+  if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  if (isHLS(url)) {
+    return res.json({ title: 'Stream HLS', thumbnail: null, duration: null });
+  }
+
+  const args = ['--dump-json', '--no-playlist', '--no-warnings', url];
+  let out = '', err = '';
+  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
+  proc.stdout.on('data', d => out += d);
+  proc.stderr.on('data', d => err += d);
+  proc.on('close', code => {
+    if (code !== 0 || !out.trim()) {
+      const msg = err.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING'))[0] || 'Erro ao buscar vídeo.';
+      return res.status(400).json({ error: msg.trim() });
+    }
+    try {
+      const info = JSON.parse(out.trim().split('\n')[0]);
+      res.json({ title: info.title, thumbnail: info.thumbnail, duration: info.duration });
+    } catch {
+      res.status(500).json({ error: 'Falha ao processar resposta.' });
+    }
+  });
+});
+
+// ── DOWNLOAD ─────────────────────────────────────────────────
+app.post('/download', (req, res) => {
+  const url       = cleanUrl(req.body.url || '');
+  const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
+  const audioOnly = !!req.body.audioOnly;
+  const title     = req.body.title || '';
+
+  if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  const jobId = uuidv4();
+
+  if (isHLS(url) && !audioOnly) {
+    runFfmpegHLS(url, jobId, send, res, req);
+  } else {
+    runYtDlp(url, format, audioOnly, jobId, send, res);
+  }
+});
+
+// ── HLS via ffmpeg (salva em disco, serve depois) ─────────────
+function runFfmpegHLS(url, jobId, send, res, req) {
+  const outFile   = path.join(DOWNLOADS_DIR, `${jobId}_${Date.now()}.mp4`);
+  const ffmpegBin = getFfmpegBin();
+
+  const args = [
+    '-nostdin', '-y',
+    '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
+    '-headers', 'Accept: */*\r\nAccept-Language: pt-BR,pt;q=0.9\r\n',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-thread_queue_size', '4096',
+    '-i', url,
+    '-c', 'copy',
+    '-bsf:a', 'aac_adtstoasc',
+    '-bufsize', '8M',
+    outFile,
+  ];
+
+  console.log(`[ffmpeg HLS] iniciando job ${jobId.slice(0,8)}`);
+  const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let totalSecs = 0;
+  let lastPct   = 0;
+
+  // Heartbeat — mostra MB em disco enquanto ffmpeg trabalha
+  const hb = setInterval(() => {
+    try {
+      if (!fs.existsSync(outFile)) return;
+      const mb = (fs.statSync(outFile).size / 1048576).toFixed(1);
+      if (parseFloat(mb) > 0) {
+        send({ type: 'progress', percent: lastPct, status: `Baixando... ${mb} MB`, speed: null, eta: null });
+      }
+    } catch {}
+  }, 3000);
+
+  proc.stderr.on('data', chunk => {
+    const text = chunk.toString();
+
+    // Pega duração total
+    const dm = /Duration:\s+(\d+):(\d+):(\d+)/.exec(text);
+    if (dm && !totalSecs) {
+      totalSecs = +dm[1]*3600 + +dm[2]*60 + +dm[3];
+    }
+
+    // Progresso por tempo
+    const tm = /time=(\d+):(\d+):(\d+)/.exec(text);
+    if (tm && totalSecs > 0) {
+      const cur = +tm[1]*3600 + +tm[2]*60 + +tm[3];
+      lastPct = Math.min(99, Math.round((cur / totalSecs) * 100));
+      const remaining = totalSecs - cur;
+      const eta = remaining > 0 ? `${Math.floor(remaining/60)}:${String(remaining%60).padStart(2,'0')}` : null;
+      send({ type: 'progress', percent: lastPct, status: 'Baixando...', speed: null, eta });
+    }
+  });
+
+  proc.on('close', code => {
+    clearInterval(hb);
+
+    if (code !== 0 || !fs.existsSync(outFile)) {
+      // Fallback para yt-dlp se ffmpeg falhar
+      console.log('[ffmpeg HLS] falhou, tentando yt-dlp...');
+      send({ type: 'progress', percent: 0, status: 'Tentando método alternativo...', speed: null, eta: null });
+      runYtDlp(url.replace(/\?.*/, ''), 'b', false, jobId, send, res);
+      return;
+    }
+
+    const basename = path.basename(outFile);
+    const title    = sanitizeFilename(req.body.title);
+    const newName  = path.join(DOWNLOADS_DIR, `${title}_${jobId.slice(0,6)}.mp4`);
+    try { fs.renameSync(outFile, newName); } catch {}
+    const finalName = fs.existsSync(newName) ? path.basename(newName) : basename;
+    send({ type: 'done', filename: finalName, url: `/files/${encodeURIComponent(finalName)}` });
+    res.end();
+    const cleanPath = fs.existsSync(newName) ? newName : outFile;
+    setTimeout(() => { try { fs.unlinkSync(cleanPath); } catch {} }, 10*60*1000);
+  });
+
+  res.on('close', () => { clearInterval(hb); try { proc.kill('SIGTERM'); } catch {} });
+}
+
+// ── yt-dlp (para não-HLS) ─────────────────────────────────────
+function runYtDlp(url, format, audioOnly, jobId, send, res) {
+  const ext    = audioOnly ? '%(ext)s' : 'mp4';
+  const outTpl = path.join(DOWNLOADS_DIR, `${jobId}_%(epoch)s.${ext}`);
+  const bin    = getYtDlpBin();
+
+  const cookiesFile = path.join(__dirname, 'cookies.txt');
+  const args = [
+    '--no-playlist', '--newline', '--force-overwrites',
+    '--concurrent-fragments', '4',
+    '-o', outTpl,
+  ];
+
+  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+
+  if (audioOnly) {
+    args.push('-x', '--audio-format', 'mp3');
+  } else {
+    args.push('-f', format);
+    args.push('--merge-output-format', 'mp4');
+  }
+  args.push(url);
+
+  console.log(`[yt-dlp] job ${jobId.slice(0,8)} formato: ${format}`);
+
+  const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
+  res.on('close', () => { try { proc.kill(); } catch {} });
+
+  let filename = null, errLog = '';
+  const rePct  = /(\d+\.?\d*)%/;
+  const reSpd  = /(\d+\.?\d*\s*[KMGkmg]i?B\/s)/;
+  const reEta  = /ETA\s+([\d:]+)/;
+  const reDest = /Destination:\s+(.+)/;
+  const reFrag = /frag\s+(\d+)\/(\d+)/i;
+
+  const hb = setInterval(() => {
+    try {
+      const f = fs.readdirSync(DOWNLOADS_DIR).filter(f => f.startsWith(jobId));
+      if (!f.length) return;
+      const mb = (fs.statSync(path.join(DOWNLOADS_DIR, f[0])).size / 1048576).toFixed(1);
+      if (parseFloat(mb) > 0) send({ type:'progress', percent:-1, status:`Baixando... ${mb} MB`, speed:null, eta:null });
+    } catch {}
+  }, 6000);
+
+  function parse(line) {
+    if (!line.trim()) return;
+    const dm = reDest.exec(line);
+    if (dm) filename = dm[1].trim();
+    const pm = rePct.exec(line);
+    if (pm) {
+      send({ type:'progress', percent: parseFloat(pm[1]), status:'Baixando...',
+        speed: (reSpd.exec(line)||[])[1]||null, eta: (reEta.exec(line)||[])[1]||null });
+      return;
+    }
+    const fm = reFrag.exec(line);
+    if (fm) {
+      const [,c,t] = fm;
+      send({ type:'progress', percent: Math.round(+c/+t*100), status:`Fragmento ${c}/${t}`, speed:null, eta:null });
+    }
+  }
+
+  proc.stdout.on('data', d => d.toString().split('\n').forEach(parse));
+  proc.stderr.on('data', d => { const t = d.toString(); errLog += t; t.split('\n').forEach(parse); });
+
+  proc.on('close', code => {
+    clearInterval(hb);
+    if (code !== 0) {
+      const msg = errLog.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]')).pop() || 'Falha no download.';
+      send({ type:'error', message: msg.trim() });
+      return res.end();
+    }
+
+    if (!filename || !fs.existsSync(filename)) {
+      const files = fs.readdirSync(DOWNLOADS_DIR)
+        .filter(f => f.startsWith(jobId))
+        .map(f => path.join(DOWNLOADS_DIR, f))
+        .sort((a,b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+      filename = files[0];
+    }
+
+    if (!filename || !fs.existsSync(filename)) {
+      send({ type:'error', message:'Arquivo não encontrado após download.' });
+      return res.end();
+    }
+
+    const basename  = path.basename(filename);
+    const ytTitle   = sanitizeFilename(title);
+    const ext2      = path.extname(basename) || '.mp4';
+    const newName2  = path.join(DOWNLOADS_DIR, `${ytTitle}_${jobId.slice(0,6)}${ext2}`);
+    try { fs.renameSync(filename, newName2); } catch {}
+    const finalName2 = fs.existsSync(newName2) ? path.basename(newName2) : basename;
+    send({ type:'done', filename: finalName2, url:`/files/${encodeURIComponent(finalName2)}` });
+    res.end();
+    const cleanPath2 = fs.existsSync(newName2) ? newName2 : filename;
+    setTimeout(() => { try { fs.unlinkSync(cleanPath2); } catch {} }, 10*60*1000);
+  });
+}
+
+// ── ARQUIVOS ─────────────────────────────────────────────────
+app.use('/files', (req, res, next) => {
+  const file = path.join(DOWNLOADS_DIR, decodeURIComponent(path.basename(req.path)));
+  if (fs.existsSync(file)) return res.download(file);
+  next();
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+setInterval(() => {
+  try {
+    fs.readdirSync(DOWNLOADS_DIR).forEach(f => {
+      const fp = path.join(DOWNLOADS_DIR, f);
+      try { if (fs.statSync(fp).mtimeMs < Date.now() - 3600000) fs.unlinkSync(fp); } catch {}
+    });
+  } catch {}
+}, 3600000);
+
+app.listen(PORT, () => {
+  console.log(`\n🟢 VidDrop rodando em http://localhost:${PORT}`);
+  console.log(`📁 Downloads: ${DOWNLOADS_DIR}`);
+  console.log(`🔧 yt-dlp:   ${getYtDlpBin()}`);
+  console.log(`🎞  ffmpeg:  ${getFfmpegBin()}\n`);
+});
