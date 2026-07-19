@@ -31,7 +31,7 @@ async function fetchInfo() {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erro ao buscar vídeo.');
-    renderVideoInfo(data, url);
+    renderVideoInfo(data);
   } catch (err) {
     showError(err.message);
   } finally {
@@ -91,6 +91,8 @@ async function startDownload() {
   const url     = document.getElementById('urlInput').value.trim();
   const isAudio = document.querySelector('.format-tab.active')?.dataset.audio === '1';
 
+  if (!url) return showError('Cole um link de vídeo válido.');
+
   hasRealProgress = false;
   hideAll();
   show('progressSection');
@@ -130,7 +132,6 @@ async function startDownload() {
 }
 
 function handleEvent(evt) {
-  // HLS stream — dispara download direto pelo link /stream
   if (evt.type === 'stream') {
     setProgress(100, t('done'));
     document.getElementById('progressSpeed').textContent = '';
@@ -178,21 +179,34 @@ function triggerDownload(filename, fileUrl) {
 function setProgress(pct, text) {
   const fill  = document.getElementById('progressBar');
   const pctEl = document.getElementById('progressPct');
-  if (pct !== null) {
+  if (pct !== null && fill && pctEl) {
     fill.style.width = pct + '%';
     pctEl.textContent = Math.round(pct) + '%';
   }
-  document.getElementById('progressText').textContent = text;
+  const textEl = document.getElementById('progressText');
+  if (textEl) textEl.textContent = text;
 }
 
 function showError(msg) {
-  document.getElementById('errorMsg').textContent = msg;
+  const el = document.getElementById('errorMsg');
+  if (el) el.textContent = msg;
   show('errorBox');
 }
 
-function show(id) { document.getElementById(id).classList.remove('hidden'); }
-function hide(id) { document.getElementById(id).classList.add('hidden'); }
-function hideAll() { ['videoInfo','progressSection','errorBox'].forEach(hide); }
+// Versão segura — não quebra se o elemento não existir
+function show(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('hidden');
+}
+
+function hide(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('hidden');
+}
+
+function hideAll() {
+  ['videoInfo','progressSection','errorBox'].forEach(hide);
+}
 
 function formatDuration(secs) {
   if (!secs) return '';
