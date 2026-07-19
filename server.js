@@ -3,6 +3,7 @@ const cors      = require('cors');
 const path      = require('path');
 const fs        = require('fs');
 const { spawn } = require('child_process');
+const { v4: uuidv4 } = require('uuid');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -17,6 +18,12 @@ function getYtDlpBin() {
   const local = path.join(__dirname, 'yt-dlp.exe');
   if (fs.existsSync(local)) return local;
   return process.env.YTDLP_BIN || 'yt-dlp';
+}
+
+function getFfmpegBin() {
+  const local = path.join(__dirname, 'ffmpeg.exe');
+  if (fs.existsSync(local)) return local;
+  return process.env.FFMPEG_BIN || 'ffmpeg';
 }
 
 function isHLS(url) {
@@ -39,7 +46,7 @@ app.get('/test', (req, res) => {
   proc.stdout.on('data', d => out += d);
   proc.stderr.on('data', d => err += d);
   proc.on('close', code => {
-    res.json({ ytdlp, version: out.trim(), code, err: err.trim() });
+    res.json({ ytdlp, ffmpeg: getFfmpegBin(), version: out.trim(), code, err: err.trim() });
   });
 });
 
@@ -71,84 +78,68 @@ app.post('/info', (req, res) => {
   });
 });
 
-// ── GET URL DIRETA (sem baixar no servidor) ──────────────────
-// O servidor só extrai a URL de download e retorna pro cliente
-// O cliente baixa direto da fonte — zero CPU/RAM do servidor
-app.post('/get-url', (req, res) => {
-  const url       = cleanUrl(req.body.url || '');
-  const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
-  const audioOnly = !!req.body.audioOnly;
+// ── STREAM HLS → MP4 (pipe direto, sem salvar em disco) ──────
+// ffmpeg lê o m3u8 e faz pipe do MP4 direto para o browser
+// Cada request é independente — múltiplos simultâneos funcionam
+app.get('/stream', (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send('URL obrigatória');
 
-  if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
-
-  // Para HLS direto, retorna a URL como está (o browser baixa direto)
-  if (isHLS(url) && !audioOnly) {
-    return res.json({ 
-      directUrl: url, 
-      filename: `video_${Date.now()}.mp4`,
-      needsProxy: false 
-    });
-  }
-
-  const cookiesFile = path.join(__dirname, 'cookies.txt');
+  const ffmpeg = getFfmpegBin();
   const args = [
-    '--get-url',
-    '--no-playlist',
-    '--no-warnings',
+    '-nostdin',
+    '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
+    '-i', url,
+    '-c', 'copy',           // sem re-encode — rápido, leve
+    '-movflags', 'frag_keyframe+empty_moov+faststart',  // MP4 streamável
+    '-f', 'mp4',
+    'pipe:1',               // output direto para stdout
   ];
 
-  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+  console.log(`[stream] iniciando HLS pipe: ${url.slice(0, 60)}...`);
 
-  if (audioOnly) {
-    args.push('-f', 'bestaudio');
-  } else {
-    // Para formatos que precisam de merge (vídeo+áudio separados),
-    // pega apenas o melhor formato pré-merged que o browser consegue baixar
-    args.push('-f', 'b[ext=mp4]/b/18/22');
-  }
+  const proc = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  args.push(url);
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `attachment; filename="video_${Date.now()}.mp4"`);
+  res.setHeader('Transfer-Encoding', 'chunked');
 
-  console.log('[get-url] args:', args.join(' '));
+  proc.stdout.pipe(res);
 
-  let out = '', err = '';
-  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
-  proc.stdout.on('data', d => out += d);
-  proc.stderr.on('data', d => err += d);
+  proc.stderr.on('data', d => {
+    // Só loga erros relevantes, não o progresso normal do ffmpeg
+    const line = d.toString();
+    if (line.includes('Error') || line.includes('error')) {
+      console.error('[stream ffmpeg]', line.trim());
+    }
+  });
 
   proc.on('close', code => {
-    const urls = out.trim().split('\n').filter(Boolean);
+    console.log(`[stream] finalizado com código ${code}`);
+    if (!res.headersSent) res.end();
+  });
 
-    if (code !== 0 || !urls.length) {
-      // Fallback: tenta baixar no servidor se não conseguir URL direta
-      console.log('[get-url] fallback para download no servidor');
-      return res.json({ needsProxy: true });
-    }
-
-    // Se retornou 2 URLs (vídeo + áudio separados), precisa do servidor para merge
-    if (urls.length > 1) {
-      console.log('[get-url] vídeo+áudio separados, usando proxy');
-      return res.json({ needsProxy: true });
-    }
-
-    // URL única — cliente baixa direto!
-    res.json({
-      directUrl: urls[0],
-      filename: `video_${Date.now()}.mp4`,
-      needsProxy: false
-    });
+  // Se o cliente cancelar, mata o ffmpeg
+  req.on('close', () => {
+    try { proc.kill('SIGTERM'); } catch {}
   });
 });
 
-// ── DOWNLOAD NO SERVIDOR (fallback para quando não tem URL direta) ─
-const { v4: uuidv4 } = require('uuid');
-
+// ── DOWNLOAD (para não-HLS via yt-dlp) ───────────────────────
 app.post('/download', (req, res) => {
   const url       = cleanUrl(req.body.url || '');
   const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
   const audioOnly = !!req.body.audioOnly;
 
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  // HLS → redireciona para o stream pipe
+  if (isHLS(url) && !audioOnly) {
+    return res.json({ 
+      type: 'stream',
+      streamUrl: `/stream?url=${encodeURIComponent(url)}` 
+    });
+  }
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -158,7 +149,7 @@ app.post('/download', (req, res) => {
   const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   const jobId = uuidv4();
 
-  runYtDlp(url, isHLS(url) && !audioOnly ? 'b' : format, audioOnly, jobId, send, res);
+  runYtDlp(url, format, audioOnly, jobId, send, res);
 });
 
 function runYtDlp(url, format, audioOnly, jobId, send, res) {
@@ -271,5 +262,6 @@ setInterval(() => {
 app.listen(PORT, () => {
   console.log(`\n🟢 VidDrop rodando em http://localhost:${PORT}`);
   console.log(`📁 Downloads: ${DOWNLOADS_DIR}`);
-  console.log(`🔧 yt-dlp:   ${getYtDlpBin()}\n`);
+  console.log(`🔧 yt-dlp:   ${getYtDlpBin()}`);
+  console.log(`🎞  ffmpeg:  ${getFfmpegBin()}\n`);
 });
