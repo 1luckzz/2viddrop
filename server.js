@@ -110,9 +110,14 @@ function runFfmpegHLS(url, jobId, send, res) {
     '-nostdin', '-y',
     '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
     '-headers', 'Accept: */*\r\nAccept-Language: pt-BR,pt;q=0.9\r\n',
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-thread_queue_size', '4096',
     '-i', url,
     '-c', 'copy',
     '-bsf:a', 'aac_adtstoasc',
+    '-bufsize', '8M',
     outFile,
   ];
 
