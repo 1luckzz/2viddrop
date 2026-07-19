@@ -1,8 +1,6 @@
 const API = '';
 let selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
-let hasRealProgress = false;
 
-// Wrapper seguro para traduções — funciona mesmo se i18n.js não carregou ainda
 function safeT(key, fallback) {
   try { return (typeof t === 'function') ? t(key) : fallback; } catch { return fallback; }
 }
@@ -98,7 +96,6 @@ async function startDownload() {
 
   if (!url) return showError('Cole um link de vídeo válido.');
 
-  hasRealProgress = false;
   hideAll();
   show('progressSection');
   setProgress(0, safeT('preparing', 'Preparando...'));
@@ -139,8 +136,6 @@ async function startDownload() {
 function handleEvent(evt) {
   if (evt.type === 'stream') {
     setProgress(100, safeT('done', 'Concluído'));
-    const sp = document.getElementById('progressSpeed');
-    if (sp) sp.textContent = '';
     setTimeout(() => {
       const a = document.createElement('a');
       a.href = evt.streamUrl;
@@ -153,12 +148,20 @@ function handleEvent(evt) {
   }
 
   if (evt.type === 'progress') {
-    if (evt.percent >= 0) hasRealProgress = true;
-    if (evt.percent < 0 && hasRealProgress) return;
-    const pct = (evt.percent !== null && evt.percent >= 0) ? evt.percent : null;
-    setProgress(pct, evt.status);
+    // Mostra sempre — sem filtros complicados
+    const pct = (typeof evt.percent === 'number' && evt.percent >= 0) ? evt.percent : null;
+    setProgress(pct, evt.status || 'Baixando...');
     const sp = document.getElementById('progressSpeed');
-    if (sp) sp.textContent = evt.speed ? `${evt.speed}${evt.eta ? ' · ETA ' + evt.eta : ''}` : '';
+    if (sp) {
+      if (evt.speed) {
+        sp.textContent = evt.speed + (evt.eta ? ' · ETA ' + evt.eta : '');
+      } else if (evt.eta) {
+        sp.textContent = 'ETA ' + evt.eta;
+      } else {
+        sp.textContent = '';
+      }
+    }
+    return;
   }
 
   if (evt.type === 'done') {
@@ -166,6 +169,7 @@ function handleEvent(evt) {
     const sp = document.getElementById('progressSpeed');
     if (sp) sp.textContent = '';
     setTimeout(() => triggerDownload(evt.filename, evt.url), 400);
+    return;
   }
 
   if (evt.type === 'error') {
@@ -187,8 +191,8 @@ function setProgress(pct, text) {
   const fill  = document.getElementById('progressBar');
   const pctEl = document.getElementById('progressPct');
   const textEl = document.getElementById('progressText');
-  if (pct !== null && fill) fill.style.width = pct + '%';
-  if (pct !== null && pctEl) pctEl.textContent = Math.round(pct) + '%';
+  if (fill && pct !== null)  fill.style.width = pct + '%';
+  if (pctEl && pct !== null) pctEl.textContent = Math.round(pct) + '%';
   if (textEl) textEl.textContent = text;
 }
 
@@ -217,7 +221,9 @@ function formatDuration(secs) {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = secs % 60;
-  return h ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+  return h
+    ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+    : `${m}:${String(s).padStart(2,'0')}`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
