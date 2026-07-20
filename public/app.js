@@ -51,6 +51,18 @@ function showError(msg) {
   if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
 
+function showDone() {
+  // Mostra mensagem de concluído por 3 segundos, depois some tudo
+  setProgress(100, '✅ Download concluído!');
+  setSpeed('');
+  setTimeout(() => {
+    hideProgress();
+    // Limpa o campo de URL
+    const input = document.getElementById('urlInput');
+    if (input) input.value = '';
+  }, 3000);
+}
+
 async function startDownload() {
   let raw = document.getElementById('urlInput').value.trim();
   if (!raw) return showError('Cole um link de vídeo válido.');
@@ -69,7 +81,6 @@ async function startDownload() {
     let downloadUrl = url;
     let title = pageTitle;
 
-    // Se for URL de página (não m3u8), extrai o m3u8 e título automaticamente
     if (isPageUrl(url) && !resolvedM3u8) {
       setProgress(0, 'Extraindo vídeo da página...');
       const extRes = await fetch(`${API}/extract`, {
@@ -126,8 +137,7 @@ async function startDownload() {
 
 function handleEvent(evt) {
   if (evt.type === 'stream') {
-    setProgress(100, 'Concluído!');
-    setSpeed('');
+    showDone();
     setTimeout(() => {
       const a = document.createElement('a');
       a.href = evt.streamUrl;
@@ -136,6 +146,8 @@ function handleEvent(evt) {
       a.click();
       a.remove();
     }, 300);
+    resolvedM3u8 = '';
+    pageTitle = '';
     return;
   }
 
@@ -147,19 +159,17 @@ function handleEvent(evt) {
   }
 
   if (evt.type === 'done') {
-    setProgress(100, 'Concluído!');
-    setSpeed('');
+    // Dispara o download do arquivo
+    const a = document.createElement('a');
+    a.href = evt.url;
+    a.download = evt.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    // Mostra mensagem de concluído e limpa
+    showDone();
     resolvedM3u8 = '';
     pageTitle = '';
-    setTimeout(() => {
-      const a = document.createElement('a');
-      a.href = evt.url;
-      a.download = evt.filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      hideProgress();
-    }, 400);
     return;
   }
 
