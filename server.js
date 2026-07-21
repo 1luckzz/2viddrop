@@ -65,120 +65,92 @@ app.post('/extract', async (req, res) => {
   const pageUrl = req.body.url || '';
   if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
 
-  // Usa yt-dlp para extrair info da página — já tem anti-bloqueio embutido
-  const args = [
-    '--dump-json',
-    '--no-playlist',
-    '--no-warnings',
-    '--quiet',
-    pageUrl,
-  ];
+  const https = require('https');
+  const http  = require('http');
 
-  const cookiesFile = path.join(__dirname, 'cookies.txt');
-  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
-
-  let out = '', err = '';
-  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
-  proc.stdout.on('data', d => out += d);
-  proc.stderr.on('data', d => err += d);
-
-  proc.on('close', code => {
-    // Se yt-dlp conseguiu extrair, usa ele
-    if (code === 0 && out.trim()) {
-      try {
-        const info = JSON.parse(out.trim().split('\n')[0]);
-        const m3u8 = info.url || info.manifest_url ||
-          (info.formats && info.formats.find(f => f.url && f.url.includes('.m3u8'))?.url);
-        const title = info.title || 'video';
-        if (m3u8) return res.json({ m3u8, title });
-        // Se não tem m3u8 mas tem URL direta
-        if (info.url) return res.json({ m3u8: info.url, title });
-      } catch {}
-    }
-
-    // Fallback: tenta fazer request manual
-    fetchPageManual(pageUrl, res);
-  });
-
-  return; // async handled above
-
-  async function fetchPageManual(url, res) {
+  function fetchHtml(url, redirectCount) {
+    redirectCount = redirectCount || 0;
+    return new Promise((resolve, reject) => {
+      if (redirectCount > 5) return reject(new Error('Muitos redirecionamentos'));
+      const client = url.startsWith('https') ? https : http;
+      const parsed = new URL(url);
+      const options = {
+        hostname: parsed.hostname,
+        path: parsed.pathname + parsed.search,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'identity',
+          'Connection': 'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Cache-Control': 'max-age=0',
+        }
+      };
+      const req2 = client.get(options, r => {
+        if ([301,302,303,307,308].includes(r.statusCode) && r.headers.location) {
+          const next = r.headers.location.startsWith('http')
+            ? r.headers.location
+            : parsed.origin + r.headers.location;
+          r.resume();
+          return resolve(fetchHtml(next, redirectCount + 1));
+        }
+        if (r.statusCode >= 400) {
+          r.resume();
+          return reject(new Error('Página não encontrada (HTTP ' + r.statusCode + '). Verifique se o link está correto.'));
+        }
+        let data = '';
+        r.on('data', d => data += d);
+        r.on('end', () => resolve(data));
+      });
+      req2.on('error', reject);
+      req2.setTimeout(15000, () => { req2.destroy(); reject(new Error('Timeout ao carregar a página.')); });
+    });
+  }
 
   try {
-    const https  = require('https');
-    const http   = require('http');
-
-    // Função para fazer GET com suporte a redirect
-    function fetchHtml(url, redirectCount = 0) {
-      return new Promise((resolve, reject) => {
-        if (redirectCount > 5) return reject(new Error('Muitos redirecionamentos'));
-        const client = url.startsWith('https') ? https : http;
-        const opts = new URL(url);
-        const options = {
-          hostname: opts.hostname,
-          path: opts.pathname + opts.search,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
-            'Accept-Encoding': 'identity',
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache',
-            'Referer': opts.origin + '/',
-          }
-        };
-        client.get(options, r => {
-          // Segue redirect
-          if ([301,302,303,307,308].includes(r.statusCode) && r.headers.location) {
-            const next = r.headers.location.startsWith('http')
-              ? r.headers.location
-              : opts.origin + r.headers.location;
-            return resolve(fetchHtml(next, redirectCount + 1));
-          }
-          if (r.statusCode >= 400) {
-            return reject(new Error('HTTP Error ' + r.statusCode + ': página não encontrada. Verifique se o link está correto.'));
-          }
-          let data = '';
-          r.on('data', d => data += d);
-          r.on('end', () => resolve(data));
-        }).on('error', reject);
-      });
-    }
-
     const html = await fetchHtml(pageUrl);
 
-    // Extrai título do og:title ou title
+    // Extrai título
     let title = '';
-    const ogMatch  = /og:title[^>]*content="([^"]+)"/i.exec(html)
-                  || /content="([^"]+)"[^>]*og:title/i.exec(html);
-    const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-    if (ogMatch)    title = ogMatch[1];
+    const ogMatch = /property="og:title"s+content="([^"]+)"/i.exec(html)
+                 || /content="([^"]+)"s+property="og:title"/i.exec(html);
+    const titleMatch = /\<title[^>]*\>([^<]+)<\/title>/i.exec(html);
+    if (ogMatch) title = ogMatch[1];
     else if (titleMatch) title = titleMatch[1];
-    // Remove sufixo do site
-    title = title.replace(/ [-|] [^-|]+$/, '').trim();
+    title = title.replace(/ [-–|] [^-–|]+$/, '').trim();
 
-    // Extrai UUID do vazounudes (padrão do iframe)
+    // Extrai UUID do vazounudes
     const uuidMatch = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
-    if (!uuidMatch) {
-      // Tenta extrair m3u8 direto do HTML
-      const m3u8Match = /https?:\/\/[^"' ]+\.m3u8[^"' ]*/i.exec(html);
-      if (m3u8Match) {
-        return res.json({ m3u8: m3u8Match[0], title: title || 'video' });
-      }
-      return res.status(400).json({ error: 'Não foi possível encontrar o vídeo nesta página.' });
+    if (uuidMatch) {
+      const uuid = uuidMatch[0];
+      const m3u8 = 'https://vazounudes.net/hls/' + uuid + '/480p/video.m3u8';
+      console.log('[extract] UUID:', uuid, '| Título:', title);
+      return res.json({ m3u8, title: title || 'video', uuid });
     }
 
-    const uuid = uuidMatch[0];
-    // Tenta qualidades em ordem decrescente
-    const qualities = ['1080p', '720p', '480p', '360p'];
-    const m3u8 = `https://vazounudes.net/hls/${uuid}/480p/video.m3u8`;
+    // Tenta m3u8 direto no HTML
+    const m3u8Match = /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i.exec(html);
+    if (m3u8Match) {
+      return res.json({ m3u8: m3u8Match[0], title: title || 'video' });
+    }
 
-    res.json({ m3u8, title: title || 'video', uuid });
+    // Tenta iframe src
+    const iframeMatch = /iframe[^>]+src="([^"]+)"/i.exec(html);
+    if (iframeMatch) {
+      console.log('[extract] iframe encontrado:', iframeMatch[1]);
+      return res.status(400).json({ error: 'Vídeo em iframe externo — cole o link m3u8 diretamente.' });
+    }
+
+    return res.status(400).json({ error: 'Não foi possível encontrar o vídeo nesta página.' });
+
   } catch (err) {
     console.error('[extract]', err.message);
-    res.status(500).json({ error: 'Erro ao processar a página: ' + err.message });
+    res.status(500).json({ error: err.message });
   }
-  } // end fetchPageManual
 });
 
 // ── INFO ─────────────────────────────────────────────────────
