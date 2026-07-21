@@ -61,96 +61,86 @@ app.get('/test', (req, res) => {
 
 
 // ── EXTRACT (pega m3u8 e título de uma URL de página) ────────
-app.post('/extract', async (req, res) => {
+app.post('/extract', (req, res) => {
   const pageUrl = req.body.url || '';
   if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
 
   const https = require('https');
   const http  = require('http');
 
-  function fetchHtml(url, redirectCount) {
-    redirectCount = redirectCount || 0;
-    return new Promise((resolve, reject) => {
-      if (redirectCount > 5) return reject(new Error('Muitos redirecionamentos'));
-      const client = url.startsWith('https') ? https : http;
-      const parsed = new URL(url);
-      const options = {
-        hostname: parsed.hostname,
-        path: parsed.pathname + parsed.search,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Accept-Encoding': 'identity',
-          'Connection': 'keep-alive',
-          'Upgrade-Insecure-Requests': '1',
-          'Sec-Fetch-Dest': 'document',
-          'Sec-Fetch-Mode': 'navigate',
-          'Sec-Fetch-Site': 'none',
-          'Cache-Control': 'max-age=0',
+  // Lista de User-Agents para rotacionar
+  const agents = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+  ];
+  const ua = agents[Math.floor(Math.random() * agents.length)];
+
+  function doFetch(url, redirects) {
+    redirects = redirects || 0;
+    if (redirects > 5) {
+      return res.status(500).json({ error: 'Muitos redirecionamentos.' });
+    }
+    const parsed  = new URL(url);
+    const client  = url.startsWith('https') ? https : http;
+    const options = {
+      hostname: parsed.hostname,
+      path:     parsed.pathname + parsed.search,
+      headers: {
+        'User-Agent':                ua,
+        'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language':           'pt-BR,pt;q=0.9',
+        'Accept-Encoding':           'identity',
+        'Connection':                'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Referer':                   parsed.origin + '/',
+      },
+    };
+
+    const r = client.get(options, resp => {
+      if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location) {
+        resp.resume();
+        const next = resp.headers.location.startsWith('http')
+          ? resp.headers.location
+          : parsed.origin + resp.headers.location;
+        return doFetch(next, redirects + 1);
+      }
+      if (resp.statusCode >= 400) {
+        resp.resume();
+        return res.status(400).json({ error: 'Página não encontrada (HTTP ' + resp.statusCode + '). Verifique o link.' });
+      }
+
+      let html = '';
+      resp.on('data', d => html += d);
+      resp.on('end', () => {
+        // Extrai título
+        let title = '';
+        const og = /property="og:title"\s+content="([^"]+)"/i.exec(html)
+                || /content="([^"]+)"\s+property="og:title"/i.exec(html);
+        const tt = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+        if (og) title = og[1];
+        else if (tt) title = tt[1];
+        title = title.replace(/ [-–|] [^-–|]+$/, '').trim();
+
+        // Extrai UUID do vazounudes
+        const uid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
+        if (uid) {
+          return res.json({ m3u8: 'https://vazounudes.net/hls/' + uid[0] + '/480p/video.m3u8', title: title || 'video' });
         }
-      };
-      const req2 = client.get(options, r => {
-        if ([301,302,303,307,308].includes(r.statusCode) && r.headers.location) {
-          const next = r.headers.location.startsWith('http')
-            ? r.headers.location
-            : parsed.origin + r.headers.location;
-          r.resume();
-          return resolve(fetchHtml(next, redirectCount + 1));
-        }
-        if (r.statusCode >= 400) {
-          r.resume();
-          return reject(new Error('Página não encontrada (HTTP ' + r.statusCode + '). Verifique se o link está correto.'));
-        }
-        let data = '';
-        r.on('data', d => data += d);
-        r.on('end', () => resolve(data));
+
+        // Tenta m3u8 direto
+        const m3 = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/i.exec(html);
+        if (m3) return res.json({ m3u8: m3[0], title: title || 'video' });
+
+        res.status(400).json({ error: 'Vídeo não encontrado na página. Cole o link m3u8 diretamente.' });
       });
-      req2.on('error', reject);
-      req2.setTimeout(15000, () => { req2.destroy(); reject(new Error('Timeout ao carregar a página.')); });
     });
+    r.on('error', err => res.status(500).json({ error: 'Erro de rede: ' + err.message }));
+    r.setTimeout(15000, () => { r.destroy(); res.status(500).json({ error: 'Timeout ao carregar a página.' }); });
   }
 
-  try {
-    const html = await fetchHtml(pageUrl);
-
-    // Extrai título
-    let title = '';
-    const ogMatch = /property="og:title"s+content="([^"]+)"/i.exec(html)
-                 || /content="([^"]+)"s+property="og:title"/i.exec(html);
-    const titleMatch = /\<title[^>]*\>([^<]+)<\/title>/i.exec(html);
-    if (ogMatch) title = ogMatch[1];
-    else if (titleMatch) title = titleMatch[1];
-    title = title.replace(/ [-–|] [^-–|]+$/, '').trim();
-
-    // Extrai UUID do vazounudes
-    const uuidMatch = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
-    if (uuidMatch) {
-      const uuid = uuidMatch[0];
-      const m3u8 = 'https://vazounudes.net/hls/' + uuid + '/480p/video.m3u8';
-      console.log('[extract] UUID:', uuid, '| Título:', title);
-      return res.json({ m3u8, title: title || 'video', uuid });
-    }
-
-    // Tenta m3u8 direto no HTML
-    const m3u8Match = /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i.exec(html);
-    if (m3u8Match) {
-      return res.json({ m3u8: m3u8Match[0], title: title || 'video' });
-    }
-
-    // Tenta iframe src
-    const iframeMatch = /iframe[^>]+src="([^"]+)"/i.exec(html);
-    if (iframeMatch) {
-      console.log('[extract] iframe encontrado:', iframeMatch[1]);
-      return res.status(400).json({ error: 'Vídeo em iframe externo — cole o link m3u8 diretamente.' });
-    }
-
-    return res.status(400).json({ error: 'Não foi possível encontrar o vídeo nesta página.' });
-
-  } catch (err) {
-    console.error('[extract]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  doFetch(pageUrl);
 });
 
 // ── INFO ─────────────────────────────────────────────────────
