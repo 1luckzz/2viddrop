@@ -68,25 +68,45 @@ app.post('/extract', async (req, res) => {
   try {
     const https  = require('https');
     const http   = require('http');
-    const client = pageUrl.startsWith('https') ? https : http;
 
-    const html = await new Promise((resolve, reject) => {
-      const opts = new URL(pageUrl);
-      const options = {
-        hostname: opts.hostname,
-        path: opts.pathname + opts.search,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'pt-BR,pt;q=0.9',
-        }
-      };
-      client.get(options, r => {
-        let data = '';
-        r.on('data', d => data += d);
-        r.on('end', () => resolve(data));
-      }).on('error', reject);
-    });
+    // Função para fazer GET com suporte a redirect
+    function fetchHtml(url, redirectCount = 0) {
+      return new Promise((resolve, reject) => {
+        if (redirectCount > 5) return reject(new Error('Muitos redirecionamentos'));
+        const client = url.startsWith('https') ? https : http;
+        const opts = new URL(url);
+        const options = {
+          hostname: opts.hostname,
+          path: opts.pathname + opts.search,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'identity',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Referer': opts.origin + '/',
+          }
+        };
+        client.get(options, r => {
+          // Segue redirect
+          if ([301,302,303,307,308].includes(r.statusCode) && r.headers.location) {
+            const next = r.headers.location.startsWith('http')
+              ? r.headers.location
+              : opts.origin + r.headers.location;
+            return resolve(fetchHtml(next, redirectCount + 1));
+          }
+          if (r.statusCode >= 400) {
+            return reject(new Error('HTTP Error ' + r.statusCode + ': página não encontrada. Verifique se o link está correto.'));
+          }
+          let data = '';
+          r.on('data', d => data += d);
+          r.on('end', () => resolve(data));
+        }).on('error', reject);
+      });
+    }
+
+    const html = await fetchHtml(pageUrl);
 
     // Extrai título do og:title ou title
     let title = '';
@@ -376,4 +396,14 @@ app.listen(PORT, () => {
   console.log(`📁 Downloads: ${DOWNLOADS_DIR}`);
   console.log(`🔧 yt-dlp:   ${getYtDlpBin()}`);
   console.log(`🎞  ffmpeg:  ${getFfmpegBin()}\n`);
+});
+
+// ── TRATAMENTO DE ERROS GLOBAIS ──────────────────────────────
+process.on('uncaughtException', err => {
+  console.error('[uncaughtException]', err.message);
+  // Não deixa o servidor morrer por erro não tratado
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
 });
