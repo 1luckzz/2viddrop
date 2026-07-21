@@ -19,47 +19,6 @@ function isPageUrl(url) {
   return !isM3u8(url) && /^https?:\/\/.+\/.+/.test(url);
 }
 
-// Extrai UUID/m3u8 do HTML via fetch do BROWSER (não do servidor)
-// O browser tem IP real, não é bloqueado
-async function extractFromPage(url) {
-  try {
-    // Tenta buscar via proxy CORS público
-    const corsProxy = 'https://api.allorigins.win/get?url=';
-    const response = await fetch(corsProxy + encodeURIComponent(url));
-    const data = await response.json();
-    const html = data.contents || '';
-
-    if (!html) throw new Error('Página vazia');
-
-    // Extrai título
-    let title = '';
-    const ogMatch = /property="og:title"\s+content="([^"]+)"/i.exec(html)
-                 || /content="([^"]+)"\s+property="og:title"/i.exec(html);
-    const titleMatch = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-    if (ogMatch) title = ogMatch[1];
-    else if (titleMatch) title = titleMatch[1];
-    title = title.replace(/ [-–|] [^-–|]+$/, '').trim();
-
-    // Extrai UUID do vazounudes
-    const uuidMatch = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
-    if (uuidMatch) {
-      const uuid = uuidMatch[0];
-      return {
-        m3u8: `https://vazounudes.net/hls/${uuid}/480p/video.m3u8`,
-        title: title || 'video'
-      };
-    }
-
-    // Tenta m3u8 direto no HTML
-    const m3u8Match = /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i.exec(html);
-    if (m3u8Match) return { m3u8: m3u8Match[0], title: title || 'video' };
-
-    throw new Error('Não foi possível encontrar o vídeo nesta página.');
-  } catch (err) {
-    throw new Error(err.message || 'Erro ao processar a página.');
-  }
-}
-
 function showProgress() {
   const el = document.getElementById('progress');
   if (el) el.classList.remove('hidden');
@@ -122,12 +81,20 @@ async function startDownload() {
     let downloadUrl = url;
     let title = pageTitle;
 
-    // Se for URL de página, extrai m3u8 no browser
+    // URL de página → servidor extrai o m3u8
     if (isPageUrl(url) && !resolvedM3u8) {
       setProgress(0, 'Extraindo vídeo da página...');
-      const extracted = await extractFromPage(url);
-      downloadUrl = extracted.m3u8;
-      title = extracted.title;
+      const extRes = await fetch(`${API}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const extData = await extRes.json();
+      if (!extRes.ok || !extData.m3u8) {
+        throw new Error(extData.error || 'Não foi possível extrair o vídeo.');
+      }
+      downloadUrl = extData.m3u8;
+      title = extData.title || title;
       resolvedM3u8 = downloadUrl;
       pageTitle = title;
     } else if (resolvedM3u8) {
@@ -182,14 +149,12 @@ function handleEvent(evt) {
     }, 300);
     return;
   }
-
   if (evt.type === 'progress') {
     const pct = (typeof evt.percent === 'number' && evt.percent >= 0) ? evt.percent : null;
     setProgress(pct, evt.status || 'Baixando...');
     setSpeed(evt.speed || '');
     return;
   }
-
   if (evt.type === 'done') {
     const a = document.createElement('a');
     a.href = evt.url;
@@ -200,7 +165,6 @@ function handleEvent(evt) {
     showDone();
     return;
   }
-
   if (evt.type === 'error') {
     resolvedM3u8 = '';
     showError(evt.message);
