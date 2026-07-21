@@ -65,6 +65,45 @@ app.post('/extract', async (req, res) => {
   const pageUrl = req.body.url || '';
   if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
 
+  // Usa yt-dlp para extrair info da página — já tem anti-bloqueio embutido
+  const args = [
+    '--dump-json',
+    '--no-playlist',
+    '--no-warnings',
+    '--quiet',
+    pageUrl,
+  ];
+
+  const cookiesFile = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+
+  let out = '', err = '';
+  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
+  proc.stdout.on('data', d => out += d);
+  proc.stderr.on('data', d => err += d);
+
+  proc.on('close', code => {
+    // Se yt-dlp conseguiu extrair, usa ele
+    if (code === 0 && out.trim()) {
+      try {
+        const info = JSON.parse(out.trim().split('\n')[0]);
+        const m3u8 = info.url || info.manifest_url ||
+          (info.formats && info.formats.find(f => f.url && f.url.includes('.m3u8'))?.url);
+        const title = info.title || 'video';
+        if (m3u8) return res.json({ m3u8, title });
+        // Se não tem m3u8 mas tem URL direta
+        if (info.url) return res.json({ m3u8: info.url, title });
+      } catch {}
+    }
+
+    // Fallback: tenta fazer request manual
+    fetchPageManual(pageUrl, res);
+  });
+
+  return; // async handled above
+
+  async function fetchPageManual(url, res) {
+
   try {
     const https  = require('https');
     const http   = require('http');
@@ -139,6 +178,7 @@ app.post('/extract', async (req, res) => {
     console.error('[extract]', err.message);
     res.status(500).json({ error: 'Erro ao processar a página: ' + err.message });
   }
+  } // end fetchPageManual
 });
 
 // ── INFO ─────────────────────────────────────────────────────
