@@ -2,7 +2,7 @@ const express   = require('express');
 const cors      = require('cors');
 const path      = require('path');
 const fs        = require('fs');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 
 const app  = express();
@@ -13,6 +13,38 @@ if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true
 
 app.use(cors());
 app.use(express.json());
+
+// ── JOBS ATIVOS (pra permitir cancelar downloads em andamento) ─
+const activeJobs = new Map(); // jobId -> { proc, cancelled }
+
+function cleanupJobFiles(jobId) {
+  try {
+    fs.readdirSync(DOWNLOADS_DIR).filter(f => f.startsWith(jobId)).forEach(f => {
+      try { fs.unlinkSync(path.join(DOWNLOADS_DIR, f)); } catch {}
+    });
+  } catch {}
+}
+
+// proc.kill() só derruba o processo direto — mas o yt-dlp.exe (empacotado com
+// PyInstaller) no Windows sobe um processo filho pra fazer o download de
+// verdade, que fica orfão e continua rodando se só matarmos o pai. taskkill
+// /T mata a árvore inteira.
+function killProcessTree(proc) {
+  if (!proc || !proc.pid || proc.killed) return;
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/PID', String(proc.pid), '/T', '/F'], () => {});
+  } else {
+    try { proc.kill(); } catch {}
+  }
+}
+
+app.post('/cancel/:jobId', (req, res) => {
+  const job = activeJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job não encontrado ou já finalizado.' });
+  job.cancelled = true;
+  killProcessTree(job.proc);
+  res.json({ ok: true });
+});
 
 function getYtDlpBin() {
   const local = path.join(__dirname, 'yt-dlp.exe');
@@ -47,6 +79,107 @@ function sanitizeFilename(name) {
     .slice(0, 80) || 'video';
 }
 
+// ── FETCH HTML (usado por /extract e pelo fallback de /playlist) ──
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+];
+
+function fetchHtml(pageUrl) {
+  const https = require('https');
+  const http  = require('http');
+  const ua    = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+
+  return new Promise((resolve, reject) => {
+    function fail(publicMessage, status) {
+      const e = new Error(publicMessage);
+      e.publicMessage = publicMessage;
+      e.status = status || 500;
+      reject(e);
+    }
+
+    function doFetch(url, redirects) {
+      redirects = redirects || 0;
+      if (redirects > 5) return fail('Muitos redirecionamentos.', 500);
+
+      let parsed;
+      try { parsed = new URL(url); } catch { return fail('URL inválida.', 400); }
+      const client  = url.startsWith('https') ? https : http;
+      const options = {
+        hostname: parsed.hostname,
+        path:     parsed.pathname + parsed.search,
+        headers: {
+          'User-Agent':                ua,
+          'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language':           'pt-BR,pt;q=0.9',
+          'Accept-Encoding':           'identity',
+          'Connection':                'keep-alive',
+          'Upgrade-Insecure-Requests': '1',
+          'Referer':                   parsed.origin + '/',
+        },
+      };
+
+      const r = client.get(options, resp => {
+        if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location) {
+          resp.resume();
+          const next = resp.headers.location.startsWith('http')
+            ? resp.headers.location
+            : parsed.origin + resp.headers.location;
+          return doFetch(next, redirects + 1);
+        }
+        if (resp.statusCode >= 400) {
+          resp.resume();
+          return fail('Página não encontrada (HTTP ' + resp.statusCode + '). Verifique o link.', 400);
+        }
+
+        let html = '';
+        resp.on('data', d => html += d);
+        resp.on('end', () => resolve(html));
+      });
+      r.on('error', err => fail('Erro de rede: ' + err.message, 500));
+      r.setTimeout(15000, () => { r.destroy(); fail('Timeout ao carregar a página.', 500); });
+    }
+
+    doFetch(pageUrl);
+  });
+}
+
+function decodeEntities(s) {
+  if (!s) return s;
+  return s.replace(/&amp;/g, '&').replace(/&quot;/g, '"')
+          .replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
+
+// Tema de "tube" WordPress (ex.: xvideosputaria.com) sem extractor no yt-dlp:
+// páginas de listagem (categoria/tag/página) mostram uma grade de vídeos com
+// `<a href="URL" title="TÍTULO" class="thumb"><img ... (data-)src="THUMB" ...`.
+// Páginas de vídeo único embutem um player (iframe vazounudes.net/video/...) —
+// nesse caso NÃO tratamos como listagem, mesmo que existam thumbs de "relacionados".
+function scrapeListingEntries(html, baseUrl) {
+  if (/vazounudes\.net\/video\/|video-player-d\.php/i.test(html)) return [];
+
+  const seen = new Set();
+  const entries = [];
+  const itemRe = /href="([^"]+)"\s+title="([^"]+)"\s+class="thumb">[\s\S]{0,400}?(?:data-src|src)="([^"]+?)"/g;
+  let m;
+  while ((m = itemRe.exec(html)) && entries.length < PLAYLIST_MAX) {
+    let url;
+    try { url = new URL(m[1], baseUrl).toString(); } catch { continue; }
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const thumb = m[3] && !m[3].startsWith('data:') ? m[3] : null;
+    entries.push({
+      url,
+      title:     decodeEntities(m[2]).trim() || 'Sem título',
+      duration:  null,
+      thumbnail: thumb,
+    });
+  }
+  return entries;
+}
+
 // ── DIAGNÓSTICO ──────────────────────────────────────────────
 app.get('/test', (req, res) => {
   const ytdlp = getYtDlpBin();
@@ -61,86 +194,155 @@ app.get('/test', (req, res) => {
 
 
 // ── EXTRACT (pega m3u8 e título de uma URL de página) ────────
-app.post('/extract', (req, res) => {
+app.post('/extract', async (req, res) => {
   const pageUrl = req.body.url || '';
   if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
 
-  const https = require('https');
-  const http  = require('http');
-
-  // Lista de User-Agents para rotacionar
-  const agents = [
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0',
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-  ];
-  const ua = agents[Math.floor(Math.random() * agents.length)];
-
-  function doFetch(url, redirects) {
-    redirects = redirects || 0;
-    if (redirects > 5) {
-      return res.status(500).json({ error: 'Muitos redirecionamentos.' });
-    }
-    const parsed  = new URL(url);
-    const client  = url.startsWith('https') ? https : http;
-    const options = {
-      hostname: parsed.hostname,
-      path:     parsed.pathname + parsed.search,
-      headers: {
-        'User-Agent':                ua,
-        'Accept':                    'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language':           'pt-BR,pt;q=0.9',
-        'Accept-Encoding':           'identity',
-        'Connection':                'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Referer':                   parsed.origin + '/',
-      },
-    };
-
-    const r = client.get(options, resp => {
-      if ([301,302,303,307,308].includes(resp.statusCode) && resp.headers.location) {
-        resp.resume();
-        const next = resp.headers.location.startsWith('http')
-          ? resp.headers.location
-          : parsed.origin + resp.headers.location;
-        return doFetch(next, redirects + 1);
-      }
-      if (resp.statusCode >= 400) {
-        resp.resume();
-        return res.status(400).json({ error: 'Página não encontrada (HTTP ' + resp.statusCode + '). Verifique o link.' });
-      }
-
-      let html = '';
-      resp.on('data', d => html += d);
-      resp.on('end', () => {
-        // Extrai título
-        let title = '';
-        const og = /property="og:title"\s+content="([^"]+)"/i.exec(html)
-                || /content="([^"]+)"\s+property="og:title"/i.exec(html);
-        const tt = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
-        if (og) title = og[1];
-        else if (tt) title = tt[1];
-        title = title.replace(/ [-–|] [^-–|]+$/, '').trim();
-
-        // Extrai UUID do vazounudes
-        const uid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
-        if (uid) {
-          return res.json({ m3u8: 'https://vazounudes.net/hls/' + uid[0] + '/480p/video.m3u8', title: title || 'video' });
-        }
-
-        // Tenta m3u8 direto
-        const m3 = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/i.exec(html);
-        if (m3) return res.json({ m3u8: m3[0], title: title || 'video' });
-
-        res.status(400).json({ error: 'Vídeo não encontrado na página. Cole o link m3u8 diretamente.' });
-      });
-    });
-    r.on('error', err => res.status(500).json({ error: 'Erro de rede: ' + err.message }));
-    r.setTimeout(15000, () => { r.destroy(); res.status(500).json({ error: 'Timeout ao carregar a página.' }); });
+  let html;
+  try {
+    html = await fetchHtml(pageUrl);
+  } catch (e) {
+    return res.status(e.status || 500).json({ error: e.publicMessage || 'Falha ao carregar página.' });
   }
 
-  doFetch(pageUrl);
+  // Extrai título
+  let title = '';
+  const og = /property="og:title"\s+content="([^"]+)"/i.exec(html)
+          || /content="([^"]+)"\s+property="og:title"/i.exec(html);
+  const tt = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+  if (og) title = og[1];
+  else if (tt) title = tt[1];
+  title = decodeEntities(title.replace(/ [-–|] [^-–|]+$/, '').trim());
+
+  // Extrai UUID do vazounudes (embutido em iframes de players tipo xvideosputaria.com)
+  const uid = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.exec(html);
+  if (uid) {
+    return res.json({ m3u8: 'https://vazounudes.net/hls/' + uid[0] + '/480p/video.m3u8', title: title || 'video' });
+  }
+
+  // Tenta m3u8 direto
+  const m3 = /https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*/i.exec(html);
+  if (m3) return res.json({ m3u8: m3[0], title: title || 'video' });
+
+  res.status(400).json({ error: 'Vídeo não encontrado na página. Cole o link m3u8 diretamente.' });
+});
+
+// ── PLAYLIST (lista os vídeos de uma página) ──────────────────
+const PLAYLIST_MAX = 200;
+
+// Igual ao cleanUrl, mas preserva `list`/`index` — sem eles a playlist some.
+function cleanPlaylistUrl(raw) {
+  try {
+    const u = new URL(raw);
+    ['start_radio','pp','si','feature','ab_channel'].forEach(p => u.searchParams.delete(p));
+    return u.toString();
+  } catch { return raw; }
+}
+
+function pickThumb(e) {
+  if (e.thumbnail) return e.thumbnail;
+  if (Array.isArray(e.thumbnails) && e.thumbnails.length) {
+    const t = e.thumbnails[e.thumbnails.length - 1];
+    return t && t.url ? t.url : null;
+  }
+  return null;
+}
+
+function entryUrl(e) {
+  if (e.webpage_url) return e.webpage_url;
+  if (e.url && /^https?:\/\//i.test(e.url)) return e.url;
+  if (e.id && e.ie_key === 'Youtube') return 'https://www.youtube.com/watch?v=' + e.id;
+  return e.url || null;
+}
+
+// yt-dlp cospe "ERROR: [generic] slug: msg (caused by ...)" — só a msg interessa.
+function tidyYtdlpError(raw, fallback, useLast) {
+  const lines = (raw || '').split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]'));
+  const line = useLast ? lines[lines.length - 1] : lines[0];
+  if (!line) return fallback;
+  let msg = line.replace(/^ERROR:\s*/i, '').replace(/^\[[^\]]+\]\s*[^:]*:\s*/, '');
+  msg = msg.replace(/\s*\(caused by .*$/is, '').trim();
+  if (msg.length > 160) msg = msg.slice(0, 157).trimEnd() + '...';
+  return msg || fallback;
+}
+
+// Canais vêm como playlist de playlists (abas), então achatamos recursivamente.
+function collectEntries(node, seen, out) {
+  if (!node || out.length >= PLAYLIST_MAX) return;
+  if (Array.isArray(node.entries)) {
+    for (const child of node.entries) collectEntries(child, seen, out);
+    return;
+  }
+  const url = entryUrl(node);
+  if (!url || seen.has(url)) return;
+  seen.add(url);
+  out.push({
+    url,
+    title:     node.title || 'Sem título',
+    duration:  typeof node.duration === 'number' ? node.duration : null,
+    thumbnail: pickThumb(node),
+  });
+}
+
+app.post('/playlist', (req, res) => {
+  const url = cleanPlaylistUrl(req.body.url || '');
+  if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
+
+  const args = ['--flat-playlist', '--dump-single-json', '--no-warnings',
+                '--playlist-end', String(PLAYLIST_MAX)];
+  const cookiesFile = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+  args.push(url);
+
+  let out = '', err = '', finished = false;
+  const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
+  const killer = setTimeout(() => killProcessTree(proc), 90000);
+
+  proc.stdout.on('data', d => out += d);
+  proc.stderr.on('data', d => err += d);
+
+  proc.on('close', async code => {
+    clearTimeout(killer);
+    if (finished) return;
+    finished = true;
+
+    if (code !== 0 || !out.trim()) {
+      // yt-dlp não tem extractor pra esse site (ex.: tubes WordPress) — tenta
+      // extrair a listagem direto do HTML antes de desistir.
+      try {
+        const html    = await fetchHtml(url);
+        const entries = scrapeListingEntries(html, url);
+        if (entries.length) {
+          console.log(`[playlist] ${entries.length} vídeo(s) via scraping em ${url}`);
+          return res.json({ title: '', entries });
+        }
+      } catch {}
+
+      return res.status(400).json({
+        error: tidyYtdlpError(err, 'Não foi possível listar os vídeos desta página.'),
+      });
+    }
+
+    let data;
+    try { data = JSON.parse(out.trim().split('\n')[0]); }
+    catch { return res.status(500).json({ error: 'Falha ao processar a lista.' }); }
+
+    const entries = [];
+    collectEntries(data, new Set(), entries);
+    if (!entries.length) return res.status(400).json({ error: 'Nenhum vídeo encontrado nesta página.' });
+
+    console.log(`[playlist] ${entries.length} vídeo(s) em ${url}`);
+    res.json({ title: data.title || '', entries });
+  });
+
+  proc.on('error', e => {
+    clearTimeout(killer);
+    if (finished) return;
+    finished = true;
+    res.status(500).json({ error: 'Erro ao executar yt-dlp: ' + e.message });
+  });
 });
 
 // ── INFO ─────────────────────────────────────────────────────
@@ -187,16 +389,19 @@ app.post('/download', (req, res) => {
 
   const send  = obj => res.write(`data: ${JSON.stringify(obj)}\n\n`);
   const jobId = uuidv4();
+  send({ type: 'start', jobId });
 
   if (isHLS(url) && !audioOnly) {
-    runFfmpegHLS(url, jobId, send, res, req);
+    // downloader nativo do yt-dlp baixa fragmentos em paralelo — muito mais
+    // rápido que o ffmpeg (que busca os .ts um de cada vez numa só conexão).
+    runYtDlp(url, 'b', false, jobId, send, res, title);
   } else {
-    runYtDlp(url, format, audioOnly, jobId, send, res);
+    runYtDlp(url, format, audioOnly, jobId, send, res, title);
   }
 });
 
-// ── HLS via ffmpeg (salva em disco, serve depois) ─────────────
-function runFfmpegHLS(url, jobId, send, res, req) {
+// ── HLS via ffmpeg (fallback caso o downloader nativo do yt-dlp falhe) ──
+function runFfmpegHLS(url, jobId, send, res, title) {
   const outFile   = path.join(DOWNLOADS_DIR, `${jobId}_${Date.now()}.mp4`);
   const ffmpegBin = getFfmpegBin();
 
@@ -217,6 +422,8 @@ function runFfmpegHLS(url, jobId, send, res, req) {
 
   console.log(`[ffmpeg HLS] iniciando job ${jobId.slice(0,8)}`);
   const proc = spawn(ffmpegBin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const job  = { proc, cancelled: false };
+  activeJobs.set(jobId, job);
 
   let totalSecs = 0;
   let lastPct   = 0;
@@ -254,18 +461,28 @@ function runFfmpegHLS(url, jobId, send, res, req) {
 
   proc.on('close', code => {
     clearInterval(hb);
+    activeJobs.delete(jobId);
 
-    if (code !== 0 || !fs.existsSync(outFile)) {
-      // Fallback para yt-dlp se ffmpeg falhar
-      console.log('[ffmpeg HLS] falhou, tentando yt-dlp...');
-      send({ type: 'progress', percent: 0, status: 'Tentando método alternativo...', speed: null, eta: null });
-      runYtDlp(url.replace(/\?.*/, ''), 'b', false, jobId, send, res);
+    if (job.cancelled) {
+      try { fs.unlinkSync(outFile); } catch {}
+      send({ type: 'cancelled' });
+      return res.end();
+    }
+
+    if (res.destroyed) {
+      // cliente desconectou (fechou a aba, caiu a rede) — não há mais ninguém ouvindo
+      try { fs.unlinkSync(outFile); } catch {}
       return;
     }
 
+    if (code !== 0 || !fs.existsSync(outFile)) {
+      send({ type: 'error', message: 'Falha no download (método alternativo também falhou).' });
+      return res.end();
+    }
+
     const basename = path.basename(outFile);
-    const title    = sanitizeFilename(req.body.title);
-    const newName  = path.join(DOWNLOADS_DIR, `${title}_${jobId.slice(0,6)}.mp4`);
+    const safeTitle = sanitizeFilename(title);
+    const newName  = path.join(DOWNLOADS_DIR, `${safeTitle}_${jobId.slice(0,6)}.mp4`);
     try { fs.renameSync(outFile, newName); } catch {}
     const finalName = fs.existsSync(newName) ? path.basename(newName) : basename;
     send({ type: 'done', filename: finalName, url: `/files/${encodeURIComponent(finalName)}` });
@@ -274,11 +491,12 @@ function runFfmpegHLS(url, jobId, send, res, req) {
     setTimeout(() => { try { fs.unlinkSync(cleanPath); } catch {} }, 10*60*1000);
   });
 
-  res.on('close', () => { clearInterval(hb); try { proc.kill('SIGTERM'); } catch {} });
+  res.on('close', () => { clearInterval(hb); killProcessTree(proc); activeJobs.delete(jobId); });
 }
 
-// ── yt-dlp (para não-HLS) ─────────────────────────────────────
-function runYtDlp(url, format, audioOnly, jobId, send, res) {
+// ── yt-dlp ───────────────────────────────────────────────────
+function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
+  const hls    = isHLS(url);
   const ext    = audioOnly ? '%(ext)s' : 'mp4';
   const outTpl = path.join(DOWNLOADS_DIR, `${jobId}_%(epoch)s.${ext}`);
   const bin    = getYtDlpBin();
@@ -286,11 +504,17 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   const cookiesFile = path.join(__dirname, 'cookies.txt');
   const args = [
     '--no-playlist', '--newline', '--force-overwrites',
-    '--concurrent-fragments', '4',
+    '--concurrent-fragments', '8',
     '-o', outTpl,
   ];
 
   if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
+
+  if (hls) {
+    args.push('--hls-prefer-native');
+    args.push('--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36');
+    try { args.push('--referer', new URL(url).origin + '/'); } catch {}
+  }
 
   if (audioOnly) {
     args.push('-x', '--audio-format', 'mp3');
@@ -303,7 +527,9 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
   console.log(`[yt-dlp] job ${jobId.slice(0,8)} formato: ${format}`);
 
   const proc = spawn(bin, args, { stdio: ['ignore','pipe','pipe'] });
-  res.on('close', () => { try { proc.kill(); } catch {} });
+  const job  = { proc, cancelled: false };
+  activeJobs.set(jobId, job);
+  res.on('close', () => killProcessTree(proc));
 
   let filename = null, errLog = '';
   const rePct  = /(\d+\.?\d*)%/;
@@ -343,9 +569,30 @@ function runYtDlp(url, format, audioOnly, jobId, send, res) {
 
   proc.on('close', code => {
     clearInterval(hb);
+    activeJobs.delete(jobId);
+
+    if (job.cancelled) {
+      cleanupJobFiles(jobId);
+      send({ type: 'cancelled' });
+      return res.end();
+    }
+
+    if (res.destroyed) {
+      // cliente desconectou (fechou a aba, caiu a rede) — não há mais ninguém ouvindo,
+      // não faz sentido tentar o fallback pro ffmpeg
+      cleanupJobFiles(jobId);
+      return;
+    }
+
     if (code !== 0) {
-      const msg = errLog.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]')).pop() || 'Falha no download.';
-      send({ type:'error', message: msg.trim() });
+      if (hls) {
+        // downloader nativo falhou — tenta o método antigo (ffmpeg) como último recurso
+        console.log('[yt-dlp] HLS nativo falhou, tentando ffmpeg...');
+        cleanupJobFiles(jobId);
+        send({ type: 'progress', percent: 0, status: 'Tentando método alternativo...', speed: null, eta: null });
+        return runFfmpegHLS(url, jobId, send, res, title);
+      }
+      send({ type:'error', message: tidyYtdlpError(errLog, 'Falha no download.', true) });
       return res.end();
     }
 
