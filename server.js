@@ -181,13 +181,36 @@ function fetchHtmlViaYtDlp(pageUrl) {
   });
 }
 
+// /playlist e /extract pedem a mesma página com segundos de diferença. Guardar o
+// HTML por pouco tempo corta uma busca inteira do caminho até o primeiro byte.
+const HTML_TTL  = 60000;
+const htmlCache = new Map();
+
+function htmlCacheGet(url) {
+  const hit = htmlCache.get(url);
+  if (!hit) return null;
+  if (Date.now() - hit.at > HTML_TTL) { htmlCache.delete(url); return null; }
+  return hit.html;
+}
+
+function htmlCacheSet(url, html) {
+  if (htmlCache.size > 40) htmlCache.clear();   // teto simples, sem política fina
+  htmlCache.set(url, { at: Date.now(), html });
+}
+
 // Tenta o cliente HTTP do Node (rápido) e só cai pro yt-dlp se o site bloquear.
 async function fetchHtml(pageUrl) {
+  const cached = htmlCacheGet(pageUrl);
+  if (cached) return cached;
+
   try {
-    return await fetchHtmlDirect(pageUrl);
+    const html = await fetchHtmlDirect(pageUrl);
+    htmlCacheSet(pageUrl, html);
+    return html;
   } catch (e) {
     try {
       const html = await fetchHtmlViaYtDlp(pageUrl);
+      htmlCacheSet(pageUrl, html);
       console.log('[fetchHtml] bloqueado no acesso direto, resolvido via yt-dlp:', pageUrl);
       return html;
     } catch {
@@ -453,7 +476,9 @@ app.post('/download', (req, res) => {
   if (isHLS(url) && !audioOnly) {
     // downloader nativo do yt-dlp baixa fragmentos em paralelo — muito mais
     // rápido que o ffmpeg (que busca os .ts um de cada vez numa só conexão).
-    runYtDlp(url, 'b', false, jobId, send, res, title);
+    // 'b' primeiro (stream já combinado, sem merge); só se não existir é que
+    // pegamos vídeo+áudio separados — antes disso caía no ffmpeg por engano.
+    runYtDlp(url, 'b/bv*+ba', false, jobId, send, res, title);
   } else {
     runYtDlp(url, format, audioOnly, jobId, send, res, title);
   }
