@@ -58,6 +58,10 @@ function getFfmpegBin() {
   return process.env.FFMPEG_BIN || 'ffmpeg';
 }
 
+// Sites atrás de Cloudflare rejeitam o TLS fingerprint padrão do yt-dlp e devolvem 403.
+// Com curl_cffi disponível (ver Dockerfile) o extractor genérico imita um browser real.
+const IMPERSONATE_ARGS = ['--extractor-args', 'generic:impersonate'];
+
 function isHLS(url) {
   return /\.m3u8/i.test(url) || url.includes('/hls/');
 }
@@ -131,7 +135,9 @@ function fetchHtml(pageUrl) {
         }
         if (resp.statusCode >= 400) {
           resp.resume();
-          return fail('Página não encontrada (HTTP ' + resp.statusCode + '). Verifique o link.', 400);
+          return fail(resp.statusCode === 403
+            ? 'O site recusou a conexão do servidor (bloqueio anti-bot).'
+            : 'Página não encontrada (HTTP ' + resp.statusCode + '). Verifique o link.', 400);
         }
 
         let html = '';
@@ -257,7 +263,17 @@ function entryUrl(e) {
 
 // yt-dlp cospe "ERROR: [generic] slug: msg (caused by ...)" — só a msg interessa.
 function tidyYtdlpError(raw, fallback, useLast) {
-  const lines = (raw || '').split('\n')
+  const all = raw || '';
+  // O yt-dlp devolve blocos longos e técnicos (com links e flags de linha de comando)
+  // que não fazem sentido pra quem só colou um link no site.
+  if (/impersonat/i.test(all))
+    return 'Este site bloqueia downloads automáticos. Tente novamente mais tarde.';
+  if (/HTTP Error 403|Forbidden/i.test(all))
+    return 'O site recusou a conexão do servidor (bloqueio anti-bot).';
+  if (/Unsupported URL/i.test(all))
+    return 'Este site não é suportado. Cole o link direto do vídeo (.m3u8 ou .mp4).';
+
+  const lines = all.split('\n')
     .map(l => l.trim())
     .filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING') && !l.startsWith('[youtube]'));
   const line = useLast ? lines[lines.length - 1] : lines[0];
@@ -291,7 +307,7 @@ app.post('/playlist', (req, res) => {
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
 
   const args = ['--flat-playlist', '--dump-single-json', '--no-warnings',
-                '--playlist-end', String(PLAYLIST_MAX)];
+                '--playlist-end', String(PLAYLIST_MAX), ...IMPERSONATE_ARGS];
   const cookiesFile = path.join(__dirname, 'cookies.txt');
   if (fs.existsSync(cookiesFile)) args.push('--cookies', cookiesFile);
   args.push(url);
@@ -354,15 +370,14 @@ app.post('/info', (req, res) => {
     return res.json({ title: 'Stream HLS', thumbnail: null, duration: null });
   }
 
-  const args = ['--dump-json', '--no-playlist', '--no-warnings', url];
+  const args = ['--dump-json', '--no-playlist', '--no-warnings', ...IMPERSONATE_ARGS, url];
   let out = '', err = '';
   const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
   proc.stdout.on('data', d => out += d);
   proc.stderr.on('data', d => err += d);
   proc.on('close', code => {
     if (code !== 0 || !out.trim()) {
-      const msg = err.split('\n').filter(l => l && !l.startsWith('[debug]') && !l.startsWith('WARNING'))[0] || 'Erro ao buscar vídeo.';
-      return res.status(400).json({ error: msg.trim() });
+      return res.status(400).json({ error: tidyYtdlpError(err, 'Erro ao buscar vídeo.') });
     }
     try {
       const info = JSON.parse(out.trim().split('\n')[0]);
@@ -505,6 +520,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
   const args = [
     '--no-playlist', '--newline', '--force-overwrites',
     '--concurrent-fragments', '8',
+    ...IMPERSONATE_ARGS,
     '-o', outTpl,
   ];
 

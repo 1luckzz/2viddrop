@@ -10,8 +10,10 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Instala yt-dlp
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+# Instala yt-dlp — build standalone (PyInstaller), que já traz curl_cffi embutido.
+# O binário "yt-dlp" puro (zipimport) roda no python3 do sistema SEM curl_cffi, e aí
+# qualquer site atrás de Cloudflare falha pedindo "--extractor-args generic:impersonate".
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux \
     -o /usr/local/bin/yt-dlp \
     && chmod a+rx /usr/local/bin/yt-dlp
 
