@@ -16,7 +16,7 @@ const router = express.Router();
 // Janela deslizante em memória. Suficiente pra uma instância; sem dependência
 // nova e sem estado compartilhado com o resto do servidor.
 const JANELA_MS       = 60000;
-const MAX_POR_JANELA  = 12;
+const MAX_POR_JANELA  = 30;   // a fila resolve vários links seguidos
 const acessos         = new Map();   // ip -> number[] (timestamps)
 
 function limitar(req, res, next) {

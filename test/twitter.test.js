@@ -232,7 +232,7 @@ describe('rotas /api/twitter', () => {
 
   test('rate limit responde 429 depois do teto', async () => {
     let viu429 = false;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 45; i++) {
       const r = await fetch(`${base}/api/twitter/resolve`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: 'https://youtube.com/nao-vale' }),
@@ -244,7 +244,7 @@ describe('rotas /api/twitter', () => {
         break;
       }
     }
-    assert.ok(viu429, 'deveria ter limitado dentro de 20 tentativas');
+    assert.ok(viu429, 'deveria ter limitado dentro de 45 tentativas');
   });
 
   test('teardown', () => { servidor.close(); });

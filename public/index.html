@@ -92,24 +92,21 @@
       <div class="box">
         <input type="text" id="twInput" placeholder="Cole o link do post do Twitter/X"
                autocomplete="off" spellcheck="false" />
-        <button type="button" id="twBtn">Buscar vídeo</button>
+        <button type="button" id="twBtn">Adicionar</button>
       </div>
-      <p class="field-hint">Posts públicos de <code>x.com</code> ou <code>twitter.com</code></p>
+      <p class="field-hint">Cole um ou vários links — cada um entra na fila e já é buscado</p>
 
-      <p id="twStatus" class="tw-status hidden"></p>
       <p id="twErro" class="error hidden"></p>
 
-      <div id="twResult" class="tw-result hidden">
-        <div class="tw-card">
-          <div class="tw-thumb"><img id="twThumb" alt="" loading="lazy" /></div>
-          <div class="tw-info">
-            <div id="twAuthor" class="tw-author"></div>
-            <div id="twText" class="tw-text"></div>
-            <div id="twDur" class="tw-dur"></div>
-          </div>
+      <div id="twFila" class="tw-fila hidden">
+        <div class="tw-fila-head">
+          <span id="twCount"></span>
+          <button type="button" id="twLimpar" class="tw-link">Limpar fila</button>
         </div>
-        <div class="tw-formats-head">Qualidades disponíveis</div>
-        <div id="twFormats" class="tw-formats"></div>
+        <div id="twLista" class="tw-lista"></div>
+        <div class="tw-fila-foot">
+          <button type="button" id="twBaixarTodos" class="tw-acao"></button>
+        </div>
       </div>
     </div>
 
