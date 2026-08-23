@@ -45,6 +45,15 @@
       </div>
     </header>
 
+    <div class="mode-switch" role="tablist" aria-label="Tipo de download">
+      <button type="button" id="modeM3u8" class="mode-btn is-active"
+              role="tab" aria-selected="true" aria-controls="paneM3u8">M3U8</button>
+      <button type="button" id="modeTwitter" class="mode-btn"
+              role="tab" aria-selected="false" aria-controls="paneTwitter">Twitter</button>
+    </div>
+
+    <!-- Painel M3U8 — conteúdo original, apenas envolvido para poder alternar -->
+    <div id="paneM3u8" role="tabpanel">
     <div class="panel">
       <label class="field-label" for="urlInput">Link do vídeo</label>
       <div class="box">
@@ -73,9 +82,40 @@
 
     <div id="playlist" class="playlist hidden"></div>
     <p id="error" class="error hidden"></p>
+    </div><!-- /paneM3u8 -->
+
+    <!-- Painel Twitter/X — independente: IDs próprios, nada compartilhado -->
+    <div id="paneTwitter" class="hidden" role="tabpanel">
+      <h2 class="tw-title">Baixar vídeo do Twitter/X</h2>
+
+      <label class="field-label" for="twInput">Link do post</label>
+      <div class="box">
+        <input type="text" id="twInput" placeholder="Cole o link do post do Twitter/X"
+               autocomplete="off" spellcheck="false" />
+        <button type="button" id="twBtn">Buscar vídeo</button>
+      </div>
+      <p class="field-hint">Posts públicos de <code>x.com</code> ou <code>twitter.com</code></p>
+
+      <p id="twStatus" class="tw-status hidden"></p>
+      <p id="twErro" class="error hidden"></p>
+
+      <div id="twResult" class="tw-result hidden">
+        <div class="tw-card">
+          <div class="tw-thumb"><img id="twThumb" alt="" loading="lazy" /></div>
+          <div class="tw-info">
+            <div id="twAuthor" class="tw-author"></div>
+            <div id="twText" class="tw-text"></div>
+            <div id="twDur" class="tw-dur"></div>
+          </div>
+        </div>
+        <div class="tw-formats-head">Qualidades disponíveis</div>
+        <div id="twFormats" class="tw-formats"></div>
+      </div>
+    </div>
 
   </main>
   <script src="theme.js"></script>
   <script src="app.js?v=10"></script>
+  <script src="twitter.js?v=1"></script>
 </body>
 </html>

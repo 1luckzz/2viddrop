@@ -195,6 +195,13 @@ body:has(#error:not(.hidden)) .lamp-led {
 }
 body:has(#error:not(.hidden)) .lamp-text::after { content: 'falhou'; }
 
+body:has(#twErro:not(.hidden)) .lamp-led {
+  background: var(--rec);
+  box-shadow: 0 0 10px rgba(224, 59, 47, .8);
+  animation: none;
+}
+body:has(#twErro:not(.hidden)) .lamp-text::after { content: 'falhou'; }
+
 @keyframes lamp-pulse {
   50% { opacity: .45; }
 }
@@ -603,6 +610,219 @@ body:has(#progress.hidden) .bar-fill { opacity: 0; }
   background-color: var(--amber);
 }
 
+/* ── Seletor de modo (M3U8 | Twitter) ──────────────────────────
+   Teclas do aparelho: a ativa fica afundada e acesa em âmbar. */
+.mode-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 10px 14px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+  background: linear-gradient(180deg, var(--btn-top), var(--btn-bot));
+  border: 1px solid var(--panel-lo);
+  border-top-color: var(--panel-hi);
+  border-radius: 3px;
+  box-shadow: 0 2px 0 var(--panel-lo);
+  transition: background .2s ease, color .2s ease, box-shadow .12s ease;
+}
+.mode-btn:hover:not(.is-active) {
+  background: linear-gradient(180deg, var(--btn-top-hi), var(--btn-bot-hi));
+}
+.mode-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.mode-btn.is-active {
+  color: var(--amber);
+  background: var(--recess);
+  border-color: var(--recess-edge);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .75);
+}
+
+/* ── Painel Twitter/X ──────────────────────────────────────── */
+
+.tw-title {
+  margin: 0 0 18px;
+  font-size: 19px;
+  font-weight: 800;
+  font-stretch: 112%;
+  letter-spacing: .01em;
+  color: var(--ink);
+}
+
+.tw-status {
+  margin: 16px 0 0;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.tw-result { margin-top: 22px; }
+
+.tw-card {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 3px;
+  background: var(--recess);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .7);
+}
+
+.tw-thumb {
+  flex-shrink: 0;
+  width: 132px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: #000;
+  align-self: flex-start;
+}
+.tw-thumb img { display: block; width: 100%; height: auto; }
+
+.tw-info { flex: 1; min-width: 0; }
+
+.tw-author {
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--amber);
+}
+
+.tw-text {
+  margin-top: 5px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--screen-txt);
+}
+
+.tw-dur {
+  margin-top: 6px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--screen-dim);
+}
+
+.tw-formats-head {
+  margin: 18px 0 9px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.tw-formats {
+  border-radius: 3px;
+  background: var(--recess);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .7);
+  padding: 6px;
+}
+
+.tw-format {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 8px;
+}
+.tw-format + .tw-format { border-top: 1px solid rgba(255, 255, 255, .07); }
+
+.tw-format-info { min-width: 0; }
+
+.tw-quality {
+  display: block;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--screen-txt);
+}
+
+.tw-detail {
+  display: block;
+  margin-top: 3px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--screen-dim);
+}
+
+.tw-download {
+  flex-shrink: 0;
+  padding: 8px 18px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--btn-top), var(--btn-bot));
+  border: 1px solid var(--panel-lo);
+  border-top-color: var(--panel-hi);
+  border-radius: 3px;
+  box-shadow: 0 2px 0 var(--panel-lo);
+}
+.tw-download:hover { background: linear-gradient(180deg, var(--btn-top-hi), var(--btn-bot-hi)); }
+.tw-download:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+/* Campo e botão do painel Twitter — regras próprias, espelhando o
+   visual do controle M3U8 sem alterar as regras dele. */
+#twInput {
+  flex: 1;
+  min-width: 0;
+  padding: 14px 15px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 14px;
+  color: var(--screen-txt);
+  background: var(--recess);
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7);
+  outline: none;
+}
+#twInput::placeholder { color: var(--screen-dim); }
+#twInput:focus-visible {
+  border-color: var(--amber);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7), 0 0 0 2px rgba(255, 154, 31, .5);
+}
+
+#twBtn {
+  flex-shrink: 0;
+  padding: 14px 24px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+  background: linear-gradient(180deg, var(--btn-top), var(--btn-bot));
+  border: 1px solid var(--panel-lo);
+  border-top-color: var(--panel-hi);
+  border-radius: 3px;
+  box-shadow: 0 2px 0 var(--panel-lo), 0 3px 6px rgba(0, 0, 0, .28);
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+#twBtn:hover { background: linear-gradient(180deg, var(--btn-top-hi), var(--btn-bot-hi)); }
+#twBtn:active {
+  transform: translateY(2px);
+  box-shadow: 0 0 0 var(--panel-lo), 0 1px 3px rgba(0, 0, 0, .3);
+}
+#twBtn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+#twBtn:disabled { opacity: .5; cursor: default; transform: none; }
+
 /* ── Responsivo ────────────────────────────────────────────── */
 
 @media (max-width: 540px) {
@@ -611,9 +831,13 @@ body:has(#progress.hidden) .bar-fill { opacity: 0; }
   .theme-toggle svg { width: 17px; height: 17px; }
   .deck-head { flex-wrap: wrap; gap: 10px; }
   .box { flex-direction: column; }
-  #dlBtn { width: 100%; }
+  #dlBtn, #twBtn { width: 100%; }
   .pl-thumb { display: none; }
   .readout-pct { font-size: 19px; }
+  .tw-card { flex-direction: column; }
+  .tw-thumb { width: 100%; }
+  .tw-format { flex-direction: column; align-items: stretch; gap: 9px; }
+  .tw-download { text-align: center; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -707,6 +707,11 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
   });
 }
 
+// ── TWITTER/X ────────────────────────────────────────────────
+// Feature isolada: router próprio sob /api/twitter, sem relação com as rotas
+// de M3U8 acima (/extract, /playlist, /info, /download).
+app.use('/api/twitter', require('./twitter/routes'));
+
 // ── ARQUIVOS ─────────────────────────────────────────────────
 app.use('/files', (req, res, next) => {
   const file = path.join(DOWNLOADS_DIR, decodeURIComponent(path.basename(req.path)));
