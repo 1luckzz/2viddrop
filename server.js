@@ -91,7 +91,7 @@ const USER_AGENTS = [
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
 ];
 
-function fetchHtml(pageUrl) {
+function fetchHtmlDirect(pageUrl) {
   const https = require('https');
   const http  = require('http');
   const ua    = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
@@ -150,6 +150,50 @@ function fetchHtml(pageUrl) {
 
     doFetch(pageUrl);
   });
+}
+
+// O Cloudflare rejeita o TLS fingerprint do Node em IPs de datacenter e devolve 403.
+// O yt-dlp tem curl_cffi e passa — então usamos ele só como buscador de HTML.
+// --dump-pages imprime cada página baixada em base64 numa única linha do stdout.
+function fetchHtmlViaYtDlp(pageUrl) {
+  return new Promise((resolve, reject) => {
+    const args = ['--dump-pages', '--skip-download', '--no-warnings',
+                  ...IMPERSONATE_ARGS, pageUrl];
+    const proc = spawn(getYtDlpBin(), args, { stdio: ['ignore','pipe','pipe'] });
+    const killer = setTimeout(() => killProcessTree(proc), 45000);
+
+    let out = '';
+    proc.stdout.on('data', d => out += d);
+    proc.stderr.on('data', () => {});
+
+    proc.on('error', e => { clearTimeout(killer); reject(e); });
+    proc.on('close', () => {
+      clearTimeout(killer);
+      // Ignoramos o exit code de propósito: o yt-dlp sai != 0 quando não acha vídeo
+      // na página, mas o dump do HTML já veio antes disso.
+      const b64 = out.split('\n')
+        .map(l => l.trim())
+        .filter(l => l.length > 500 && /^[A-Za-z0-9+/=]+$/.test(l))
+        .sort((a, b) => b.length - a.length)[0];
+      if (!b64) return reject(new Error('yt-dlp não retornou a página.'));
+      resolve(Buffer.from(b64, 'base64').toString('utf8'));
+    });
+  });
+}
+
+// Tenta o cliente HTTP do Node (rápido) e só cai pro yt-dlp se o site bloquear.
+async function fetchHtml(pageUrl) {
+  try {
+    return await fetchHtmlDirect(pageUrl);
+  } catch (e) {
+    try {
+      const html = await fetchHtmlViaYtDlp(pageUrl);
+      console.log('[fetchHtml] bloqueado no acesso direto, resolvido via yt-dlp:', pageUrl);
+      return html;
+    } catch {
+      throw e;  // a mensagem do fetch direto é mais útil pro usuário
+    }
+  }
 }
 
 function decodeEntities(s) {
