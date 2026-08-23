@@ -14,15 +14,64 @@ if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true
 app.use(cors());
 app.use(express.json());
 
+// Teto de segurança: um m3u8 de transmissão ao vivo (ou que nunca fecha) faz o
+// downloader escrever pra sempre e encher o disco do servidor. Nada no caminho
+// de download tinha limite antes disto.
+const MAX_DOWNLOAD_BYTES = Number(process.env.MAX_DOWNLOAD_BYTES) || 4 * 1024 * 1024 * 1024;
+const MAX_DOWNLOAD_MS    = Number(process.env.MAX_DOWNLOAD_MS)    || 60 * 60 * 1000;
+
+// Soma o que o job já escreveu (HLS gera vários arquivos por job).
+function bytesDoJob(jobId) {
+  try {
+    return fs.readdirSync(DOWNLOADS_DIR)
+      .filter(n => n.startsWith(jobId))
+      .reduce((total, n) => {
+        try { return total + fs.statSync(path.join(DOWNLOADS_DIR, n)).size; } catch { return total; }
+      }, 0);
+  } catch { return 0; }
+}
+
+function formatarTeto(bytes) {
+  return bytes >= 1073741824
+    ? `${(bytes / 1073741824).toFixed(bytes % 1073741824 ? 1 : 0)} GB`
+    : `${Math.round(bytes / 1048576)} MB`;
+}
+
+function formatarTempo(ms) {
+  const min = ms / 60000;
+  return min >= 1 ? `${Math.round(min)} minutos` : `${Math.round(ms / 1000)} segundos`;
+}
+
+function motivoDoLimite(bytes, inicio) {
+  if (bytes > MAX_DOWNLOAD_BYTES) {
+    return `Esse vídeo passou de ${formatarTeto(MAX_DOWNLOAD_BYTES)} e foi interrompido. `
+         + 'Pode ser uma transmissão ao vivo, que não tem fim.';
+  }
+  if (Date.now() - inicio > MAX_DOWNLOAD_MS) {
+    return `O download passou de ${formatarTempo(MAX_DOWNLOAD_MS)} e foi interrompido. `
+         + 'Pode ser uma transmissão ao vivo, que não tem fim.';
+  }
+  return null;
+}
+
 // ── JOBS ATIVOS (pra permitir cancelar downloads em andamento) ─
 const activeJobs = new Map(); // jobId -> { proc, cancelled }
 
-function cleanupJobFiles(jobId) {
+function varrerArquivosDoJob(jobId) {
   try {
     fs.readdirSync(DOWNLOADS_DIR).filter(f => f.startsWith(jobId)).forEach(f => {
       try { fs.unlinkSync(path.join(DOWNLOADS_DIR, f)); } catch {}
     });
   } catch {}
+}
+
+function cleanupJobFiles(jobId) {
+  varrerArquivosDoJob(jobId);
+  // killProcessTree é assíncrono (taskkill no Windows, SIGTERM no Linux) e os
+  // fragmentos concorrentes seguem gravando por alguns instantes — sem estas
+  // passadas extras sobra lixo no disco, que é justamente o que queremos evitar.
+  setTimeout(() => varrerArquivosDoJob(jobId), 3000).unref();
+  setTimeout(() => varrerArquivosDoJob(jobId), 12000).unref();
 }
 
 // proc.kill() só derruba o processo direto — mas o yt-dlp.exe (empacotado com
@@ -501,6 +550,7 @@ function runFfmpegHLS(url, jobId, send, res, title) {
     '-c', 'copy',
     '-bsf:a', 'aac_adtstoasc',
     '-bufsize', '8M',
+    '-fs', String(MAX_DOWNLOAD_BYTES),   // o próprio ffmpeg para no teto
     outFile,
   ];
 
@@ -512,12 +562,21 @@ function runFfmpegHLS(url, jobId, send, res, title) {
   let totalSecs = 0;
   let lastPct   = 0;
 
-  // Heartbeat — mostra MB em disco enquanto ffmpeg trabalha
+  // Heartbeat — mostra MB em disco e aplica o mesmo teto do yt-dlp
+  const inicioJob = Date.now();
   const hb = setInterval(() => {
     try {
       if (!fs.existsSync(outFile)) return;
-      const mb = (fs.statSync(outFile).size / 1048576).toFixed(1);
-      if (parseFloat(mb) > 0) {
+      const bytes = fs.statSync(outFile).size;
+      const excedeu = motivoDoLimite(bytes, inicioJob);
+      if (excedeu) {
+        job.limiteExcedido = excedeu;
+        clearInterval(hb);
+        killProcessTree(proc);
+        return;
+      }
+      if (bytes > 0) {
+        const mb = (bytes / 1048576).toFixed(1);
         send({ type: 'progress', percent: lastPct, status: `Baixando... ${mb} MB`, speed: null, eta: null });
       }
     } catch {}
@@ -557,6 +616,12 @@ function runFfmpegHLS(url, jobId, send, res, title) {
       // cliente desconectou (fechou a aba, caiu a rede) — não há mais ninguém ouvindo
       try { fs.unlinkSync(outFile); } catch {}
       return;
+    }
+
+    if (job.limiteExcedido) {
+      try { fs.unlinkSync(outFile); } catch {}
+      send({ type: 'error', message: job.limiteExcedido });
+      return res.end();
     }
 
     if (code !== 0 || !fs.existsSync(outFile)) {
@@ -623,12 +688,21 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
   const reDest = /Destination:\s+(.+)/;
   const reFrag = /frag\s+(\d+)\/(\d+)/i;
 
+  const inicioJob = Date.now();
   const hb = setInterval(() => {
     try {
-      const f = fs.readdirSync(DOWNLOADS_DIR).filter(f => f.startsWith(jobId));
-      if (!f.length) return;
-      const mb = (fs.statSync(path.join(DOWNLOADS_DIR, f[0])).size / 1048576).toFixed(1);
-      if (parseFloat(mb) > 0) send({ type:'progress', percent:-1, status:`Baixando... ${mb} MB`, speed:null, eta:null });
+      const bytes = bytesDoJob(jobId);
+      const excedeu = motivoDoLimite(bytes, inicioJob);
+      if (excedeu) {
+        job.limiteExcedido = excedeu;   // impede o fallback pro ffmpeg
+        clearInterval(hb);
+        killProcessTree(proc);
+        return;
+      }
+      if (bytes > 0) {
+        const mb = (bytes / 1048576).toFixed(1);
+        send({ type:'progress', percent:-1, status:`Baixando... ${mb} MB`, speed:null, eta:null });
+      }
     } catch {}
   }, 6000);
 
@@ -667,6 +741,12 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
       // não faz sentido tentar o fallback pro ffmpeg
       cleanupJobFiles(jobId);
       return;
+    }
+
+    if (job.limiteExcedido) {
+      cleanupJobFiles(jobId);
+      send({ type:'error', message: job.limiteExcedido });
+      return res.end();
     }
 
     if (code !== 0) {
