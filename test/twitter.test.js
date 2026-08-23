@@ -148,6 +148,18 @@ describe('extração de formatos', () => {
     assert.equal(extrairFormatos({ formats: [] }).length, 0);
     assert.equal(extrairFormatos({}).length, 0);
   });
+
+  // Regressão: o yt-dlp escreve "null" no stdout quando não extrai nada.
+  // JSON.parse("null") é null, e isso derrubava extrairFormatos com TypeError
+  // dentro do callback — a promise nunca resolvia e a fila travava em
+  // "Buscando..." pra sempre.
+  test('entrada nula não derruba a extração', () => {
+    assert.equal(extrairFormatos(null).length, 0);
+    assert.equal(extrairFormatos(undefined).length, 0);
+    assert.equal(extrairFormatos(JSON.parse('null')).length, 0);
+    assert.equal(extrairFormatos('texto solto').length, 0);
+    assert.equal(extrairFormatos(42).length, 0);
+  });
 });
 
 // ── 6, 7, 8: mensagens de erro ───────────────────────────────

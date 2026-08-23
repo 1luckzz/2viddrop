@@ -4,6 +4,8 @@
 // Nada aqui é compartilhado com o downloader M3U8 — módulo independente.
 
 const { execFile } = require('child_process');
+const fs   = require('fs');
+const path = require('path');
 const { ehHostDeMidiaPermitido } = require('./validation');
 
 const TIMEOUT_MS    = 25000;
@@ -17,8 +19,14 @@ const ERROS = {
   temporario:    'Não foi possível processar o vídeo agora. Tente novamente.',
 };
 
+// Mesma detecção do server.js: em desenvolvimento no Windows o binário é o
+// yt-dlp.exe da raiz do projeto, e não existe um "yt-dlp" no PATH. Sem isto o
+// execFile falha com ENOENT e todo post vira "falha temporária".
 function binarioYtDlp() {
-  return process.env.YTDLP_BIN || 'yt-dlp';
+  if (process.env.YTDLP_BIN) return process.env.YTDLP_BIN;
+  const local = path.join(__dirname, '..', 'yt-dlp.exe');
+  if (fs.existsSync(local)) return local;
+  return 'yt-dlp';
 }
 
 // O yt-dlp fala inglês e com detalhes técnicos; traduzimos pra algo que o
@@ -59,6 +67,7 @@ function tamanhoEstimado(f, duracao) {
  * módulo M3U8, e ele não é alterado por esta feature.
  */
 function extrairFormatos(info) {
+  if (!info || typeof info !== 'object') return [];
   const duracao = typeof info.duration === 'number' ? info.duration : null;
   const brutos  = Array.isArray(info.formats) ? info.formats : [];
 
@@ -110,6 +119,19 @@ function resumir(texto, limite = 180) {
   return t.length > limite ? t.slice(0, limite - 1).trimEnd() + '…' : t;
 }
 
+// O timeout do execFile manda SIGTERM e confia que o processo morre. Não morre:
+// no Windows o sinal não derruba o yt-dlp, e o binário ainda gera um subprocesso.
+// Sem matar a árvore, o stdio nunca fecha, o callback nunca vem e a requisição
+// fica pendurada — foi o que deixou a fila presa em "Buscando..." pra sempre.
+function matarArvore(proc) {
+  if (!proc || !proc.pid) return;
+  if (process.platform === 'win32') {
+    execFile('taskkill', ['/PID', String(proc.pid), '/T', '/F'], () => {});
+  } else {
+    try { proc.kill('SIGKILL'); } catch {}
+  }
+}
+
 /**
  * Chama o yt-dlp só para metadados. A URL já vem validada e remontada pelo
  * servidor, e os argumentos vão separados — nunca concatenados numa string.
@@ -128,46 +150,79 @@ function resolverTweet(urlValidada) {
       urlValidada,
     ];
 
-    execFile(binarioYtDlp(), args, {
-      timeout:   TIMEOUT_MS,
+    let respondeu = false;
+    let alarme    = null;
+
+    // Uma resposta, e só uma, sempre — aconteça o que acontecer com o processo.
+    function responder(r) {
+      if (respondeu) return;
+      respondeu = true;
+      clearTimeout(alarme);
+      resolve(r);
+    }
+
+    const filho = execFile(binarioYtDlp(), args, {
       maxBuffer: MAX_BUFFER,
       windowsHide: true,
     }, (err, stdout, stderr) => {
       if (err && !String(stdout || '').trim()) {
         if (err.killed || err.signal === 'SIGTERM' || err.code === 'ETIMEDOUT') {
-          return resolve({ ok: false, status: 504, erro: ERROS.temporario });
+          return responder({ ok: false, status: 504, erro: ERROS.temporario });
         }
         const msg = traduzirErro(stderr || err.message);
         const status = msg === ERROS.naoEncontrado ? 404
                      : msg === ERROS.privado       ? 403
                      : msg === ERROS.semVideo      ? 422 : 502;
-        return resolve({ ok: false, status, erro: msg });
+        return responder({ ok: false, status, erro: msg });
       }
 
-      let info;
       try {
-        info = JSON.parse(String(stdout).trim().split('\n')[0]);
-      } catch {
-        return resolve({ ok: false, status: 502, erro: ERROS.temporario });
-      }
+        let info;
+        try {
+          info = JSON.parse(String(stdout).trim().split('\n')[0]);
+        } catch {
+          return responder({ ok: false, status: 502, erro: ERROS.temporario });
+        }
 
-      const formats = extrairFormatos(info);
-      if (!formats.length) {
-        return resolve({ ok: false, status: 422, erro: ERROS.semVideo });
-      }
+        // Quando não consegue extrair, o yt-dlp escreve "null" no stdout — que é
+        // JSON válido e vira null. Sem esta guarda o código seguia adiante e
+        // estourava, deixando a requisição pendurada sem nunca responder.
+        if (!info || typeof info !== 'object') {
+          const msg = traduzirErro(stderr || '');
+          const status = msg === ERROS.naoEncontrado ? 404
+                       : msg === ERROS.privado       ? 403
+                       : msg === ERROS.semVideo      ? 422 : 502;
+          return responder({ ok: false, status, erro: msg });
+        }
 
-      resolve({
-        ok: true,
-        dados: {
-          tweetId:   String(info.id || ''),
-          title:     resumir(info.title || info.description || ''),
-          author:    info.uploader || info.uploader_id || info.channel || '',
-          thumbnail: melhorThumbnail(info),
-          duration:  typeof info.duration === 'number' ? info.duration : null,
-          formats,
-        },
-      });
+        const formats = extrairFormatos(info);
+        if (!formats.length) {
+          return responder({ ok: false, status: 422, erro: ERROS.semVideo });
+        }
+
+        responder({
+          ok: true,
+          dados: {
+            tweetId:   String(info.id || ''),
+            title:     resumir(info.title || info.description || ''),
+            author:    info.uploader || info.uploader_id || info.channel || '',
+            thumbnail: melhorThumbnail(info),
+            duration:  typeof info.duration === 'number' ? info.duration : null,
+            formats,
+          },
+        });
+      } catch (e) {
+        // Rede de segurança: qualquer falha inesperada vira resposta, nunca
+        // uma promise pendurada.
+        console.error('[twitter] erro ao montar resposta:', e && e.message);
+        responder({ ok: false, status: 502, erro: ERROS.temporario });
+      }
     });
+
+    alarme = setTimeout(() => {
+      matarArvore(filho);
+      responder({ ok: false, status: 504, erro: ERROS.temporario });
+    }, TIMEOUT_MS);
   });
 }
 

@@ -89,12 +89,19 @@
   }
 
   // ── resolução (uma requisição por item, em paralelo) ───────
+  // O servidor corta em 25s; damos folga e desistimos em 45s. Sem isto, uma
+  // resposta que nunca chega deixa o item preso em "Buscando..." pra sempre.
+  const TIMEOUT_MS = 45000;
+
   async function resolver(item) {
+    const corte = new AbortController();
+    const alarme = setTimeout(() => corte.abort(), TIMEOUT_MS);
     try {
       const res = await fetch('/api/twitter/resolve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: item.url }),
+        signal: corte.signal,
       });
 
       let data = {};
@@ -107,9 +114,13 @@
         item.status = 'pronto';
         item.dados = data;
       }
-    } catch {
+    } catch (e) {
       item.status = 'erro';
-      item.erro = 'Não foi possível processar o vídeo agora. Tente novamente.';
+      item.erro = e && e.name === 'AbortError'
+        ? 'O servidor demorou demais para responder. Tente novamente.'
+        : 'Não foi possível processar o vídeo agora. Tente novamente.';
+    } finally {
+      clearTimeout(alarme);
     }
     render();
   }
