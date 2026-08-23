@@ -40,7 +40,7 @@ function formatDuration(secs) {
 
 function showProgress() {
   const el = document.getElementById('progress');
-  if (el) el.classList.remove('hidden');
+  if (el) { el.classList.remove('hidden'); el.classList.remove('is-done'); }
   hideError();
 }
 
@@ -238,7 +238,9 @@ function handleEvent(evt) {
 
 function showDone() {
   currentJobId = null;
-  setProgress(100, '✅ Download concluído!');
+  const box = document.getElementById('progress');
+  if (box) box.classList.add('is-done');
+  setProgress(100, 'Download concluído!');
   setSpeed('');
   setTimeout(() => {
     hideProgress();
@@ -437,10 +439,10 @@ async function downloadItem(item) {
         setItemState(item, 'downloading', pct, evt.status || 'Baixando...');
       } else if (evt.type === 'done') {
         triggerSave(evt.url, evt.filename);
-        setItemState(item, 'done', 100, '✅ Concluído');
+        setItemState(item, 'done', 100, 'Concluído');
       } else if (evt.type === 'stream') {
         triggerSave(evt.streamUrl, `${item.title || 'video'}.mp4`);
-        setItemState(item, 'done', 100, '✅ Concluído');
+        setItemState(item, 'done', 100, 'Concluído');
       } else if (evt.type === 'cancelled') {
         wasCancelled = true;
       } else if (evt.type === 'error') {
@@ -452,8 +454,8 @@ async function downloadItem(item) {
   }
 
   if (wasCancelled) setItemState(item, 'error', item.percent, '⏹ Cancelado');
-  else if (failure) setItemState(item, 'error', item.percent, '⚠ ' + failure);
-  else if (item.status !== 'done') setItemState(item, 'error', item.percent, '⚠ Falha no download.');
+  else if (failure) setItemState(item, 'error', item.percent, failure);
+  else if (item.status !== 'done') setItemState(item, 'error', item.percent, 'Falha no download.');
 }
 
 async function startBatch() {

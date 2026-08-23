@@ -180,6 +180,14 @@ body:has(#progress:not(.hidden)) .lamp-led {
 body:has(#progress:not(.hidden)) .lamp-text { color: var(--ink); }
 body:has(#progress:not(.hidden)) .lamp-text::after { content: 'baixando'; }
 
+/* concluído: o painel segue visível por alguns segundos, mas parou de trabalhar */
+body:has(#progress.is-done) .lamp-led {
+  background: var(--amber);
+  box-shadow: 0 0 10px rgba(255, 154, 31, .85);
+  animation: none;
+}
+body:has(#progress.is-done) .lamp-text::after { content: 'concluído'; }
+
 body:has(#error:not(.hidden)) .lamp-led {
   background: var(--rec);
   box-shadow: 0 0 10px rgba(224, 59, 47, .8);
@@ -558,6 +566,41 @@ body:has(#progress.hidden) .bar-fill { opacity: 0; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme]) .theme-toggle .icon-sun  { display: block; }
   :root:not([data-theme]) .theme-toggle .icon-moon { display: none; }
+}
+
+/* ── Indicadores de estado ─────────────────────────────────────
+   Desenhados como máscara em vez de emoji: o glifo não depende da
+   fonte do sistema e a cor é a do próprio estado, nos dois acabamentos. */
+.pl-item.is-done .pl-meta::before,
+.pl-item.is-error .pl-meta::before,
+.progress.is-done .readout-status::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 7px;
+  vertical-align: -1px;
+  -webkit-mask: var(--state-icon) center / contain no-repeat;
+  mask: var(--state-icon) center / contain no-repeat;
+}
+
+/* a cor vem explícita: .pl-meta define a sua própria, então currentColor
+   aqui pegaria o cinza do texto em vez da cor do estado */
+.pl-item.is-done .pl-meta::before {
+  --state-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 6 9 17l-5-5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: var(--amber);
+}
+.pl-item.is-done .pl-meta { color: var(--amber); }
+
+.pl-item.is-error .pl-meta::before {
+  --state-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3 22 20H2z' fill='none' stroke='%23000' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cpath d='M12 10v4' stroke='%23000' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.3' r='1.35' fill='%23000'/%3E%3C/svg%3E");
+  background-color: #ff9d94;
+}
+.pl-item.is-error .pl-meta { color: #ff9d94; }
+
+.progress.is-done .readout-status::before {
+  --state-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20 6 9 17l-5-5' fill='none' stroke='%23000' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-color: var(--amber);
 }
 
 /* ── Responsivo ────────────────────────────────────────────── */
