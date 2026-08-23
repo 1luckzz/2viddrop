@@ -3,27 +3,53 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>agora eu consegui arrumar o site galera</title>
+  <title>Meekz Drop — baixe vídeos por link</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=3" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Azeret+Mono:wght@400..700&family=Saira+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
-  <main>
-    <h1 class="logo">agora eu consegui arrumar o site galera</h1>
-    <div class="box">
-      <input type="text" id="urlInput" placeholder="Cole o link do vídeo aqui..." autocomplete="off" spellcheck="false" />
-      <button id="dlBtn" onclick="startDownload()">Baixar</button>
+  <main class="deck">
+
+    <header class="deck-head">
+      <h1 class="logo">Meekz Drop</h1>
+      <!-- O LED reflete o estado real da página via :has() — ver style.css -->
+      <div class="lamp" aria-hidden="true">
+        <span class="lamp-led"></span>
+        <span class="lamp-text"></span>
+      </div>
+    </header>
+
+    <div class="panel">
+      <label class="field-label" for="urlInput">Link do vídeo</label>
+      <div class="box">
+        <input type="text" id="urlInput" placeholder="cole o link aqui"
+               autocomplete="off" spellcheck="false" />
+        <button id="dlBtn" onclick="startDownload()">Baixar</button>
+      </div>
+      <p class="field-hint">Página de vídeo, playlist ou link direto <code>.m3u8</code></p>
     </div>
-    <div id="progress" class="progress hidden">
+
+    <div class="meter">
+      <span class="field-label">Transferência</span>
       <div class="bar-track"><div id="bar" class="bar-fill"></div></div>
-      <p><span id="status">Iniciando...</span> <span id="pct"></span></p>
-      <p id="speed"></p>
-      <button type="button" id="cancelBtn" class="cancel-btn" onclick="cancelCurrentJob()">Cancelar download</button>
+      <div id="progress" class="progress hidden">
+        <div class="readout">
+          <span id="status" class="readout-status">Iniciando...</span>
+          <span id="pct" class="readout-pct"></span>
+        </div>
+        <div class="readout readout-foot">
+          <span id="speed" class="readout-speed"></span>
+          <button type="button" id="cancelBtn" class="cancel-btn"
+                  onclick="cancelCurrentJob()">Cancelar</button>
+        </div>
+      </div>
     </div>
+
     <div id="playlist" class="playlist hidden"></div>
     <p id="error" class="error hidden"></p>
+
   </main>
   <script src="app.js?v=10"></script>
 </body>
