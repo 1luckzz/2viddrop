@@ -409,8 +409,11 @@ function setItemState(item, status, percent, text) {
 }
 
 // ── fila sequencial ────────────────────────────────────────────
-async function downloadItem(item) {
+async function downloadItem(item, posicao, total) {
   setItemState(item, 'downloading', 0, 'Iniciando...');
+  const rotulo = posicao && total ? `Vídeo ${posicao} de ${total}` : 'Baixando';
+  setProgress(0, rotulo);
+  setSpeed('');
   let failure = null;
   let wasCancelled = false;
   let downloadUrl = item.url;
@@ -435,8 +438,14 @@ async function downloadItem(item) {
 
     await runDownload(downloadUrl, item.title, evt => {
       if (evt.type === 'progress') {
-        const pct = (typeof evt.percent === 'number' && evt.percent >= 0) ? evt.percent : item.percent;
-        setItemState(item, 'downloading', pct, evt.status || 'Baixando...');
+        const temPct = typeof evt.percent === 'number' && evt.percent >= 0;
+        const pct    = temPct ? evt.percent : item.percent;
+        // a linha do item mostra o número; a faixa de 4px sozinha é discreta demais
+        const texto  = temPct ? `${evt.status || 'Baixando...'} ${Math.round(pct)}%`
+                              : (evt.status || 'Baixando...');
+        setItemState(item, 'downloading', pct, texto);
+        setProgress(temPct ? pct : null, rotulo);
+        setSpeed(evt.speed || '');
       } else if (evt.type === 'done') {
         triggerSave(evt.url, evt.filename);
         setItemState(item, 'done', 100, 'Concluído');
@@ -453,7 +462,7 @@ async function downloadItem(item) {
     failure = err.message;
   }
 
-  if (wasCancelled) setItemState(item, 'error', item.percent, '⏹ Cancelado');
+  if (wasCancelled) setItemState(item, 'error', item.percent, 'Cancelado');
   else if (failure) setItemState(item, 'error', item.percent, failure);
   else if (item.status !== 'done') setItemState(item, 'error', item.percent, 'Falha no download.');
 }
@@ -469,18 +478,21 @@ async function startBatch() {
   batchRunning = true;
   setBusy(true);
   updateCounts();
+  showProgress();   // o medidor acompanha o item atual da fila
 
-  for (const item of queue) {
+  for (let i = 0; i < queue.length; i++) {
+    const item = queue[i];
     if (cancelRequested) break;
     // pode ter sido removido ou desmarcado enquanto a fila andava
     if (!playlistItems.includes(item) || !item.selected) continue;
-    await downloadItem(item);
+    await downloadItem(item, i + 1, queue.length);
   }
 
   batchRunning = false;
   currentJobId = null;
   setBusy(false);
   updateCounts();
+  hideProgress();
 
   if (cancelRequested) {
     showError('Downloads cancelados.');
