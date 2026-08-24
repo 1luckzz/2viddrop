@@ -362,6 +362,17 @@ describe('syndication', () => {
     assert.equal(extrairDeSyndication({ mediaDetails: [{ type: 'photo' }] }), null);
   });
 
+  // O X devolve TweetTombstone quando o post existe mas ele não o exibe a
+  // visitante anônimo (conteúdo sensível/restrito por idade). Dizer "não contém
+  // vídeo" nesse caso seria mentira: o post tem vídeo, só não é público.
+  test('post restrito é reconhecido como tombstone', () => {
+    const { ehRestrito } = require('../twitter/syndication');
+    assert.equal(ehRestrito({ __typename: 'TweetTombstone', tombstone: {} }), true);
+    assert.equal(ehRestrito({ __typename: 'Tweet', text: 'oi' }), false);
+    assert.equal(ehRestrito(null), false);
+    assert.equal(ehRestrito('texto'), false);
+  });
+
   test('entrada inválida não derruba', () => {
     for (const v of [null, undefined, 'texto', 42, {}]) {
       assert.equal(extrairDeSyndication(v), null);

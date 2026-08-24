@@ -69,6 +69,13 @@ function rotuloQualidade(altura, largura) {
   return largura ? `${largura}px` : 'Padrão';
 }
 
+// O X responde TweetTombstone quando o post existe mas ele não o exibe a quem
+// não está autenticado (conteúdo sensível, restrito por idade, conta protegida).
+// Distinguir isso de "post sem vídeo" importa: a mensagem ao usuário é outra.
+function ehRestrito(j) {
+  return !!j && typeof j === 'object' && j.__typename === 'TweetTombstone';
+}
+
 /**
  * Converte a resposta da syndication no mesmo formato que o resolver do yt-dlp
  * devolve, para o resto da aplicação não precisar saber de onde veio.
@@ -145,11 +152,13 @@ function extrairDeSyndication(j) {
 async function resolverPorSyndication(tweetId) {
   if (!/^\d{1,25}$/.test(String(tweetId || ''))) return { ok: false };
   try {
-    const dados = extrairDeSyndication(await buscarJson(tweetId));
+    const j = await buscarJson(tweetId);
+    if (ehRestrito(j)) return { ok: false, restrito: true };
+    const dados = extrairDeSyndication(j);
     return dados ? { ok: true, dados } : { ok: false };
   } catch {
     return { ok: false };   // silencioso de propósito: o yt-dlp assume daqui
   }
 }
 
-module.exports = { resolverPorSyndication, extrairDeSyndication, tokenDoId };
+module.exports = { resolverPorSyndication, extrairDeSyndication, ehRestrito, tokenDoId };

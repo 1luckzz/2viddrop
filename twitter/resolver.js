@@ -242,6 +242,11 @@ async function resolverTweet(urlValidada, tweetId) {
       if (via.ok && via.dados && via.dados.formats.length) {
         return { ok: true, dados: via.dados };
       }
+      // O X disse explicitamente que não exibe este post a visitante anônimo.
+      // Insistir no yt-dlp só devolveria "sem vídeo", que seria mentira.
+      if (via.restrito) {
+        return { ok: false, status: 403, erro: ERROS.privado };
+      }
     } catch {
       // nunca deixa a syndication derrubar a resolução: segue pro yt-dlp
     }
