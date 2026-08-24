@@ -78,7 +78,7 @@ router.post('/resolve', limitar, async (req, res) => {
 
   let resultado;
   try {
-    resultado = await resolverTweet(validacao.url);
+    resultado = await resolverTweet(validacao.url, validacao.tweetId);
   } catch (e) {
     console.error('[twitter] falha inesperada ao resolver:', e && e.message);
     return res.status(502).json({ success: false, error: ERROS.temporario });

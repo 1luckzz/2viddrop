@@ -7,6 +7,7 @@ const { execFile } = require('child_process');
 const fs   = require('fs');
 const path = require('path');
 const { ehHostDeMidiaPermitido } = require('./validation');
+const { resolverPorSyndication } = require('./syndication');
 
 const TIMEOUT_MS    = 25000;
 const MAX_BUFFER    = 12 * 1024 * 1024;   // JSON de metadados não passa disso
@@ -137,7 +138,7 @@ function matarArvore(proc) {
  * servidor, e os argumentos vão separados — nunca concatenados numa string.
  * @param {string} urlValidada
  */
-function resolverTweet(urlValidada) {
+function resolverPorYtDlp(urlValidada) {
   return new Promise(resolve => {
     const args = [
       '--dump-single-json',
@@ -226,4 +227,32 @@ function resolverTweet(urlValidada) {
   });
 }
 
-module.exports = { resolverTweet, extrairFormatos, traduzirErro, ERROS };
+/**
+ * Tenta a API de syndication primeiro — é um GET só, responde em milissegundos
+ * e cobre a maioria dos posts públicos. Qualquer falha dela cai no yt-dlp, que
+ * continua sendo o caminho definitivo e não foi alterado por esta adição.
+ *
+ * @param {string} urlValidada  URL remontada pelo servidor
+ * @param {string} [tweetId]    id já validado; sem ele, vai direto ao yt-dlp
+ */
+async function resolverTweet(urlValidada, tweetId) {
+  if (tweetId) {
+    try {
+      const via = await resolverPorSyndication(tweetId);
+      if (via.ok && via.dados && via.dados.formats.length) {
+        return { ok: true, dados: via.dados };
+      }
+    } catch {
+      // nunca deixa a syndication derrubar a resolução: segue pro yt-dlp
+    }
+  }
+  return resolverPorYtDlp(urlValidada);
+}
+
+module.exports = {
+  resolverTweet,
+  resolverPorYtDlp,
+  extrairFormatos,
+  traduzirErro,
+  ERROS,
+};

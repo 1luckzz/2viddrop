@@ -299,3 +299,99 @@ describe('downloader M3U8 permanece intacto', () => {
     }
   });
 });
+
+// ── Syndication: caminho rápido, tentado antes do yt-dlp ─────
+describe('syndication', () => {
+  const { extrairDeSyndication, tokenDoId } = require('../twitter/syndication');
+
+  const resposta = {
+    __typename: 'Tweet',
+    id_str: '123456789',
+    text: 'Olha esse vídeo https://t.co/abc123',
+    user: { screen_name: 'alguem', name: 'Alguém' },
+    mediaDetails: [{
+      type: 'video',
+      media_url_https: 'https://pbs.twimg.com/ext_tw_video_thumb/123/img.jpg',
+      video_info: {
+        duration_millis: 30000,
+        variants: [
+          { bitrate: 632000,  content_type: 'video/mp4',
+            url: 'https://video.twimg.com/ext_tw_video/1/pu/vid/320x568/a.mp4' },
+          { bitrate: 2176000, content_type: 'video/mp4',
+            url: 'https://video.twimg.com/ext_tw_video/1/pu/vid/720x1280/c.mp4' },
+          // HLS fica de fora: quem baixa HLS é o módulo M3U8
+          { content_type: 'application/x-mpegURL',
+            url: 'https://video.twimg.com/ext_tw_video/1/pu/pl/x.m3u8' },
+          { bitrate: 950000,  content_type: 'video/mp4',
+            url: 'https://video.twimg.com/ext_tw_video/1/pu/vid/480x852/b.mp4' },
+          // host de fora nunca entra
+          { bitrate: 999,     content_type: 'video/mp4', url: 'https://evil.com/x.mp4' },
+        ],
+      },
+    }],
+  };
+
+  test('token é derivado do id', () => {
+    assert.match(tokenDoId('20'), /^[a-z0-9]+$/);
+    assert.equal(tokenDoId('20'), tokenDoId('20'));   // estável
+  });
+
+  test('extrai só mp4 do X, da maior para a menor', () => {
+    const d = extrairDeSyndication(resposta);
+    assert.deepEqual(d.formats.map(f => f.quality), ['1280p', '852p', '568p']);
+    assert.ok(d.formats.every(f => f.url.startsWith('https://video.twimg.com/')));
+    assert.ok(!d.formats.some(f => f.url.includes('.m3u8')));
+    assert.ok(!d.formats.some(f => f.url.includes('evil.com')));
+  });
+
+  test('lê duração, autor, texto e miniatura', () => {
+    const d = extrairDeSyndication(resposta);
+    assert.equal(d.duration, 30);
+    assert.equal(d.author, 'alguem');
+    assert.equal(d.title, 'Olha esse vídeo');       // o t.co final é removido
+    assert.ok(d.thumbnail.startsWith('https://pbs.twimg.com/'));
+  });
+
+  test('estima tamanho a partir do bitrate', () => {
+    const d = extrairDeSyndication(resposta);
+    assert.equal(d.formats[0].filesize, Math.round((2176000 / 8) * 30));
+  });
+
+  test('post sem vídeo devolve null (cai no yt-dlp)', () => {
+    assert.equal(extrairDeSyndication({ id_str: '1', text: 'só texto' }), null);
+    assert.equal(extrairDeSyndication({ mediaDetails: [{ type: 'photo' }] }), null);
+  });
+
+  test('entrada inválida não derruba', () => {
+    for (const v of [null, undefined, 'texto', 42, {}]) {
+      assert.equal(extrairDeSyndication(v), null);
+    }
+  });
+});
+
+// ── o yt-dlp segue sendo o caminho definitivo ────────────────
+describe('yt-dlp não foi afetado pela syndication', () => {
+  const resolver = require('../twitter/resolver');
+
+  test('resolverPorYtDlp continua exportado e intacto', () => {
+    assert.equal(typeof resolver.resolverPorYtDlp, 'function');
+  });
+
+  test('resolverTweet sem tweetId vai direto ao yt-dlp', async () => {
+    // sem id não há syndication possível; deve resolver pelo yt-dlp e responder
+    const r = await resolver.resolverTweet('https://x.com/u/status/1', undefined);
+    assert.equal(typeof r, 'object');
+    assert.equal(r.ok, false);          // post inexistente
+    assert.ok(r.erro, 'deve trazer mensagem amigável');
+  });
+
+  test('extrairFormatos (do yt-dlp) continua funcionando', () => {
+    const f = resolver.extrairFormatos({
+      duration: 10,
+      formats: [{ format_id: 'a', ext: 'mp4', width: 1280, height: 720, tbr: 1000,
+                  protocol: 'https', url: 'https://video.twimg.com/a/720.mp4' }],
+    });
+    assert.equal(f.length, 1);
+    assert.equal(f[0].quality, '720p');
+  });
+});
