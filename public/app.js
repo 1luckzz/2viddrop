@@ -384,38 +384,42 @@ function setItemState(item, status, percent, note) {
 }
 
 // ── download de um item da fila ────────────────────────────────
+// Duas tentativas, nesta ordem:
+//   1. a URL como o usuário colou — o yt-dlp tem extractor próprio para a
+//      maioria dos sites e resolve sozinho;
+//   2. só se a primeira falhar, o /extract raspa o m3u8 embutido na página
+//      (vazounudes e os players que o incorporam).
+// A ordem inversa quebrava todo site suportado pelo yt-dlp: o /extract
+// devolvia um m3u8 fabricado e o download morria antes de começar.
 async function downloadItem(item, posicao, total) {
   setItemState(item, 'downloading', 0, 'Iniciando...');
   const rotulo = `Link ${posicao} de ${total}`;
   setProgress(0, rotulo);
   setSpeed('');
 
-  let failure = null;
-  let wasCancelled = false;
-  let downloadUrl = item.m3u8 || item.url;
+  const primeira = await tryDownload(item, item.m3u8 || item.url, rotulo);
+  if (primeira.ok || primeira.cancelled || cancelRequested) return finishItem(item, primeira);
+
+  if (!item.m3u8 && isPageUrl(item.url)) {
+    const m3u8 = await extractM3u8(item);
+    if (m3u8) {
+      item.m3u8 = m3u8;
+      setItemState(item, 'downloading', 0, 'Tentando método alternativo...');
+      const segunda = await tryDownload(item, m3u8, rotulo);
+      if (segunda.ok || segunda.cancelled) return finishItem(item, segunda);
+      // o erro do yt-dlp diz o que houve ("vídeo privado"); o do scraper não
+      return finishItem(item, { ...segunda, erro: primeira.erro || segunda.erro });
+    }
+  }
+
+  finishItem(item, primeira);
+}
+
+async function tryDownload(item, url, rotulo) {
+  let ok = false, cancelled = false, erro = null;
 
   try {
-    // URL de página → tenta extrair o m3u8 antes de baixar. Se falhar (ex.:
-    // sites que o yt-dlp já suporta direto), usa a URL original.
-    if (!item.m3u8 && isPageUrl(item.url)) {
-      setItemState(item, 'downloading', 0, 'Extraindo vídeo da página...');
-      try {
-        const extRes  = await fetch(`${API}/extract`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: item.url }),
-        });
-        const extData = await extRes.json();
-        if (extRes.ok && extData.m3u8) {
-          downloadUrl = item.m3u8 = extData.m3u8;
-          if (extData.title && item.title === item.url) item.title = extData.title;
-        }
-      } catch {
-        // sem extração: cai no fluxo original com item.url
-      }
-    }
-
-    await runDownload(downloadUrl, item.title, evt => {
+    await runDownload(url, item.title, evt => {
       if (evt.type === 'progress') {
         const temPct = typeof evt.percent === 'number' && evt.percent >= 0;
         const pct    = temPct ? evt.percent : item.percent;
@@ -427,45 +431,60 @@ async function downloadItem(item, posicao, total) {
         setSpeed(evt.speed || '');
       } else if (evt.type === 'done') {
         triggerSave(evt.url, evt.filename);
-        setItemState(item, 'done', 100, 'Concluído');
+        ok = true;
       } else if (evt.type === 'stream') {
         triggerSave(evt.streamUrl, `${item.title || 'video'}.mp4`);
-        setItemState(item, 'done', 100, 'Concluído');
+        ok = true;
       } else if (evt.type === 'cancelled') {
-        wasCancelled = true;
+        cancelled = true;
       } else if (evt.type === 'error') {
-        failure = evt.message;
+        erro = evt.message;
       }
     });
   } catch (err) {
-    failure = err.message;
+    erro = err.message;
   }
 
-  if (wasCancelled) setItemState(item, 'error', item.percent, 'Cancelado');
-  else if (failure) setItemState(item, 'error', item.percent, failure);
-  else if (item.status !== 'done') setItemState(item, 'error', item.percent, 'Falha no download.');
+  return { ok, cancelled, erro };
+}
+
+async function extractM3u8(item) {
+  setItemState(item, 'downloading', 0, 'Extraindo vídeo da página...');
+  try {
+    const res  = await fetch(`${API}/extract`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: item.url }),
+    });
+    const data = await res.json();
+    if (res.ok && data.m3u8) {
+      if (data.title && item.title === item.url) item.title = data.title;
+      return data.m3u8;
+    }
+  } catch {
+    // sem extração: o erro da primeira tentativa é o que vale
+  }
+  return '';
+}
+
+function finishItem(item, r) {
+  if (r.ok)        return setItemState(item, 'done', 100, 'Concluído');
+  if (r.cancelled) return setItemState(item, 'error', item.percent, 'Cancelado');
+  setItemState(item, 'error', item.percent, r.erro || 'Falha no download.');
 }
 
 // ── fila sequencial ────────────────────────────────────────────
+// O lote não espera a análise de todos os links: começa pelo primeiro que
+// ficar pronto e os demais seguem sendo analisados durante o download. Assim
+// a análise de cada item se esconde atrás do download do anterior, e um link
+// lento (ou que estoura o tempo) não trava a fila inteira.
+function isQueued(item) {
+  return item.selected && item.status !== 'done' && item.status !== 'downloading';
+}
+
 async function startBatch() {
   if (batchRunning) return;
-
-  // links recém-colados podem ainda estar sendo analisados
-  const analises = queue.map(i => i.pending).filter(Boolean);
-  if (analises.length) {
-    setBusy(true);
-    showProgress();
-    setProgress(0, 'Analisando links...');
-    setSpeed('');
-    await Promise.allSettled(analises);
-    setBusy(false);
-  }
-
-  const lote = queue.filter(i => i.selected && i.status !== 'done');
-  if (!lote.length) {
-    hideProgress();
-    return showError('Selecione ao menos um link.');
-  }
+  if (!queue.some(isQueued)) return showError('Selecione ao menos um link.');
 
   hideError();
   cancelRequested = false;
@@ -474,12 +493,28 @@ async function startBatch() {
   updateCounts();
   showProgress();   // o medidor acompanha o item atual da fila
 
-  for (let i = 0; i < lote.length; i++) {
-    const item = lote[i];
-    if (cancelRequested) break;
-    // pode ter sido removido ou desmarcado enquanto a fila andava
-    if (!queue.includes(item) || !item.selected) continue;
-    await downloadItem(item, i + 1, lote.length);
+  const feitos = new Set();
+  let posicao  = 0;
+  let esperas  = 0;   // trava de segurança: nunca girar sem alguém para esperar
+
+  while (!cancelRequested) {
+    const item = queue.find(i => isQueued(i) && !feitos.has(i) && i.status !== 'analyzing');
+
+    if (!item) {
+      const analisando = queue.filter(i => i.status === 'analyzing' && i.pending);
+      if (!analisando.length || ++esperas > queue.length + 5) break;
+      setProgress(0, 'Analisando links...');
+      setSpeed('');
+      await Promise.race(analisando.map(i => i.pending));
+      continue;
+    }
+
+    esperas = 0;
+    feitos.add(item);
+    posicao++;
+    // o total cresce se uma página se expandir em vários vídeos no meio do caminho
+    const total = posicao + queue.filter(i => isQueued(i) && !feitos.has(i)).length;
+    await downloadItem(item, posicao, total);
   }
 
   batchRunning = false;
