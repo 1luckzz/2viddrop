@@ -1,8 +1,11 @@
+// Painel XVIDEOS/M3U8 — fila de links.
+// Colar um link não baixa nada: ele entra na fila e é analisado em segundo
+// plano. O download só começa em "Baixar todos", um item de cada vez.
 const API = '';
-let selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
-let pageTitle = '';
-let resolvedM3u8 = '';
-let playlistItems = [];
+const selectedFormat = 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/b';
+
+let queue = [];
+let seq = 0;
 let batchRunning = false;
 let currentJobId = null;
 let cancelRequested = false;
@@ -64,7 +67,6 @@ function setSpeed(text) {
 }
 
 function showError(msg) {
-  hideProgress();
   const el = document.getElementById('error');
   if (el) { el.textContent = msg; el.classList.remove('hidden'); }
 }
@@ -88,7 +90,7 @@ function triggerSave(url, filename) {
   a.remove();
 }
 
-// ── streaming SSE compartilhado entre download único e em lote ──
+// ── streaming SSE de um download ───────────────────────────────
 async function runDownload(url, title, onEvent) {
   const res = await fetch(`${API}/download`, {
     method: 'POST',
@@ -123,150 +125,110 @@ async function runDownload(url, title, onEvent) {
   }
 }
 
-// ── ponto de entrada: decide entre lista e download único ──────
-async function startDownload() {
+// ── entrada: um link ou vários de uma vez ──────────────────────
+function extractLinks(text) {
+  return String(text || '')
+    .split(/[\s,]+/)
+    .map(t => t.trim())
+    .filter(t => /^https?:\/\/.+/i.test(t));
+}
+
+function makeItem(data) {
+  return {
+    id: ++seq,
+    url: data.url,
+    title: data.title || data.url,
+    duration: data.duration || 0,
+    thumbnail: data.thumbnail || '',
+    m3u8: '',            // resolvido uma vez só, reusado se o item for re-tentado
+    selected: true,
+    status: 'idle',      // idle | analyzing | downloading | done | error
+    percent: 0,
+    note: '',
+    pending: null,       // promessa da análise, aguardada antes do lote começar
+    row: null,
+  };
+}
+
+function addToQueue() {
   const input = document.getElementById('urlInput');
-  const raw   = input.value.trim();
-  if (!raw) return showError('Cole um link de vídeo válido.');
+  const links = extractLinks(input.value);
+  if (!links.length) return showError('Cole um link de vídeo válido.');
 
   hideError();
-  setBusy(true);
 
-  try {
-    // m3u8 direto não tem playlist pra listar
-    if (isM3u8(raw)) return await singleDownload(cleanUrl(raw));
-
-    showProgress();
-    setProgress(0, 'Analisando link...');
-    setSpeed('');
-
-    let entries = null;
-    try {
-      const res  = await fetch(`${API}/playlist`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: raw }),
-      });
-      const data = await res.json();
-      if (res.ok && Array.isArray(data.entries)) entries = data.entries;
-    } catch {
-      // sem lista: cai no fluxo de vídeo único abaixo
-    }
-
-    if (entries && entries.length > 1) {
-      hideProgress();
-      renderPlaylist(entries);
-      return;
-    }
-
-    const single = entries && entries.length === 1 ? entries[0].url : cleanUrl(raw);
-    if (entries && entries.length === 1) pageTitle = entries[0].title || '';
-    await singleDownload(single);
-  } catch (err) {
-    showError(err.message);
-  } finally {
-    setBusy(false);
+  let novos = 0;
+  for (const raw of links) {
+    const url = cleanUrl(raw);
+    if (queue.some(i => i.url === url)) continue;
+    const item = makeItem({ url });
+    item.status = 'analyzing';
+    item.note   = 'Analisando link...';
+    queue.push(item);
+    novos++;
+    item.pending = resolveItem(item);
   }
+
+  input.value = '';
+  if (!novos) showError('Esses links já estão na fila.');
+  render();
 }
 
-// ── download de um vídeo só (fluxo original) ───────────────────
-async function singleDownload(url) {
-  document.getElementById('urlInput').value = url;
-  clearPlaylist();
-  cancelRequested = false;
-  currentJobId = null;
-  showProgress();
-  setProgress(0, 'Analisando link...');
-  setSpeed('');
+// ── análise (uma requisição por link, em paralelo) ─────────────
+// Não marca erro quando a análise falha: o yt-dlp ainda pode dar conta do
+// link direto na hora do download. Só o download decide se o item falhou.
+async function resolveItem(item) {
+  if (isM3u8(item.url)) {
+    if (item.title === item.url) item.title = 'Link direto .m3u8';
+    setItemState(item, 'idle', 0, '');
+    return;
+  }
 
-  let downloadUrl = url;
-  let title = pageTitle;
-
-  // URL de página → servidor extrai o m3u8
-  if (isPageUrl(url) && !resolvedM3u8) {
-    setProgress(0, 'Extraindo vídeo da página...');
-    const extRes = await fetch(`${API}/extract`, {
+  let entries = null;
+  try {
+    const res  = await fetch(`${API}/playlist`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url: item.url }),
     });
-    const extData = await extRes.json();
-    if (extRes.ok && extData.m3u8) {
-      downloadUrl = extData.m3u8;
-      title = extData.title || title;
-      resolvedM3u8 = downloadUrl;
-      pageTitle = title;
-    }
-    // se /extract falhar, tenta a URL original direto no yt-dlp
-  } else if (resolvedM3u8) {
-    downloadUrl = resolvedM3u8;
+    const data = await res.json();
+    if (res.ok && Array.isArray(data.entries)) entries = data.entries;
+  } catch {}
+
+  const pos = queue.indexOf(item);
+  if (pos === -1) return;   // removido da fila enquanto analisava
+
+  if (!entries || !entries.length) {
+    setItemState(item, 'idle', 0, '');
+    return;
   }
 
-  setProgress(0, 'Iniciando download...');
-  await runDownload(downloadUrl, title, handleEvent);
+  if (entries.length === 1) {
+    const e = entries[0];
+    item.url       = e.url || item.url;
+    item.title     = e.title || item.title;
+    item.duration  = e.duration || 0;
+    item.thumbnail = e.thumbnail || '';
+    setItemState(item, 'idle', 0, '');
+    return;
+  }
+
+  // página com vários vídeos: vira N itens na fila, no lugar deste
+  const novos = entries
+    .filter(e => e.url && !queue.some(i => i.url === e.url))
+    .map(e => makeItem(e));
+  queue.splice(pos, 1, ...novos);
+  render();
 }
 
-function handleEvent(evt) {
-  if (evt.type === 'stream') {
-    showDone();
-    setTimeout(() => triggerSave(evt.streamUrl, `video_${Date.now()}.mp4`), 300);
-    return;
-  }
-  if (evt.type === 'progress') {
-    const pct = (typeof evt.percent === 'number' && evt.percent >= 0) ? evt.percent : null;
-    setProgress(pct, evt.status || 'Baixando...');
-    setSpeed(evt.speed || '');
-    return;
-  }
-  if (evt.type === 'done') {
-    triggerSave(evt.url, evt.filename);
-    showDone();
-    return;
-  }
-  if (evt.type === 'cancelled') {
-    currentJobId = null;
-    resolvedM3u8 = '';
-    showError('Download cancelado.');
-    return;
-  }
-  if (evt.type === 'error') {
-    currentJobId = null;
-    resolvedM3u8 = '';
-    showError(evt.message);
-  }
-}
-
-function showDone() {
-  currentJobId = null;
-  const box = document.getElementById('progress');
-  if (box) box.classList.add('is-done');
-  setProgress(100, 'Download concluído!');
-  setSpeed('');
-  setTimeout(() => {
-    hideProgress();
-    const input = document.getElementById('urlInput');
-    if (input) input.value = '';
-    pageTitle = '';
-    resolvedM3u8 = '';
-  }, 3000);
-}
-
-// ── lista de vídeos da página ──────────────────────────────────
-function clearPlaylist() {
-  playlistItems = [];
+// ── render da fila ─────────────────────────────────────────────
+function render() {
   const box = document.getElementById('playlist');
-  if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
-}
+  if (!box) return;
 
-function renderPlaylist(entries) {
-  playlistItems = entries.map((e, i) => ({
-    id: i, url: e.url, title: e.title, duration: e.duration, thumbnail: e.thumbnail,
-    selected: true, status: 'idle', percent: 0, row: null,
-  }));
-
-  const box = document.getElementById('playlist');
-  box.innerHTML = '';
-  box.classList.remove('hidden');
+  box.textContent = '';
+  box.classList.toggle('hidden', queue.length === 0);
+  if (!queue.length) return;
 
   const head = document.createElement('div');
   head.className = 'pl-head';
@@ -275,14 +237,14 @@ function renderPlaylist(entries) {
     `<span class="pl-actions">` +
       `<button type="button" class="pl-link" id="plAll">Marcar todos</button>` +
       `<button type="button" class="pl-link" id="plNone">Desmarcar todos</button>` +
+      `<button type="button" class="pl-link" id="plClear">Limpar fila</button>` +
     `</span>`;
   box.appendChild(head);
 
   const list = document.createElement('div');
   list.className = 'pl-list';
   box.appendChild(list);
-
-  playlistItems.forEach(item => list.appendChild(buildRow(item)));
+  queue.forEach(item => list.appendChild(buildRow(item)));
 
   const foot = document.createElement('div');
   foot.className = 'pl-foot';
@@ -291,8 +253,9 @@ function renderPlaylist(entries) {
     `<button type="button" id="plCancel" class="pl-cancel hidden">Cancelar downloads</button>`;
   box.appendChild(foot);
 
-  head.querySelector('#plAll').onclick  = () => setAllSelected(true);
-  head.querySelector('#plNone').onclick = () => setAllSelected(false);
+  head.querySelector('#plAll').onclick   = () => setAllSelected(true);
+  head.querySelector('#plNone').onclick  = () => setAllSelected(false);
+  head.querySelector('#plClear').onclick = clearQueue;
   foot.querySelector('#plStart').onclick  = startBatch;
   foot.querySelector('#plCancel').onclick = cancelCurrentJob;
 
@@ -323,14 +286,14 @@ function buildRow(item) {
   const info = document.createElement('div');
   info.className = 'pl-info';
 
+  // textContent sempre: título e URL vêm de páginas de terceiros
   const title = document.createElement('div');
   title.className = 'pl-title';
   title.textContent = item.title;
-  title.title = item.title;
+  title.title = item.url;
 
   const meta = document.createElement('div');
   meta.className = 'pl-meta';
-  meta.textContent = formatDuration(item.duration);
 
   const track = document.createElement('div');
   track.className = 'pl-track hidden';
@@ -344,24 +307,30 @@ function buildRow(item) {
   del.type = 'button';
   del.className = 'pl-del';
   del.textContent = '×';
-  del.title = 'Remover da lista';
+  del.title = 'Remover da fila';
   del.onclick = () => removeItem(item);
 
   row.append(cb, thumb, info, del);
   item.row = { root: row, meta, track, fill, check: cb, del };
+  applyRowState(item);
   return row;
 }
 
 function removeItem(item) {
   if (item.status === 'downloading') return;
-  playlistItems = playlistItems.filter(i => i !== item);
-  if (item.row) item.row.root.remove();
-  if (!playlistItems.length) return clearPlaylist();
-  updateCounts();
+  queue = queue.filter(i => i !== item);
+  render();
+}
+
+function clearQueue() {
+  if (batchRunning) return;
+  queue = [];
+  hideError();
+  render();
 }
 
 function setAllSelected(value) {
-  playlistItems.forEach(i => {
+  queue.forEach(i => {
     if (i.status === 'done' || i.status === 'downloading') return;
     i.selected = value;
     if (i.row) i.row.check.checked = value;
@@ -370,16 +339,20 @@ function setAllSelected(value) {
 }
 
 function updateCounts() {
-  const total    = playlistItems.length;
-  const selected = playlistItems.filter(i => i.selected && i.status !== 'done').length;
+  const total      = queue.length;
+  const analisando = queue.filter(i => i.status === 'analyzing').length;
+  const aBaixar    = queue.filter(i => i.selected && i.status !== 'done').length;
 
   const countEl = document.getElementById('plCount');
-  if (countEl) countEl.textContent = `${total} vídeo${total === 1 ? '' : 's'} encontrado${total === 1 ? '' : 's'}`;
+  if (countEl) {
+    countEl.textContent = `${total} ${total === 1 ? 'link' : 'links'} na fila`
+      + (analisando ? ` · ${analisando} analisando` : '');
+  }
 
   const btn = document.getElementById('plStart');
   if (btn) {
-    btn.disabled = batchRunning || selected === 0;
-    btn.textContent = `Baixar selecionados (${selected})`;
+    btn.disabled = batchRunning || aBaixar === 0;
+    btn.textContent = `Baixar todos (${aBaixar})`;
     btn.classList.toggle('hidden', batchRunning);
   }
 
@@ -387,50 +360,56 @@ function updateCounts() {
   if (cancelBtn) cancelBtn.classList.toggle('hidden', !batchRunning);
 }
 
-function setItemState(item, status, percent, text) {
-  item.status = status;
-  if (typeof percent === 'number') item.percent = percent;
+// ── estado visual de um item ───────────────────────────────────
+function applyRowState(item) {
   if (!item.row) return;
-
   const { root, meta, track, fill, check, del } = item.row;
-  root.classList.toggle('is-done',  status === 'done');
-  root.classList.toggle('is-error', status === 'error');
-  check.disabled = del.disabled = (status === 'downloading');
 
-  if (status === 'downloading') {
-    track.classList.remove('hidden');
-    fill.style.width = Math.max(0, Math.min(100, item.percent)) + '%';
-  } else if (status === 'done') {
-    track.classList.add('hidden');
-  }
+  root.classList.toggle('is-done',  item.status === 'done');
+  root.classList.toggle('is-error', item.status === 'error');
+  check.disabled = del.disabled = (item.status === 'downloading');
 
-  if (text) meta.textContent = text;
-  else meta.textContent = formatDuration(item.duration);
+  track.classList.toggle('hidden', item.status !== 'downloading');
+  fill.style.width = Math.max(0, Math.min(100, item.percent)) + '%';
+
+  meta.textContent = item.note || formatDuration(item.duration);
 }
 
-// ── fila sequencial ────────────────────────────────────────────
+function setItemState(item, status, percent, note) {
+  item.status = status;
+  if (typeof percent === 'number') item.percent = percent;
+  if (note !== undefined) item.note = note;
+  applyRowState(item);
+  updateCounts();
+}
+
+// ── download de um item da fila ────────────────────────────────
 async function downloadItem(item, posicao, total) {
   setItemState(item, 'downloading', 0, 'Iniciando...');
-  const rotulo = posicao && total ? `Vídeo ${posicao} de ${total}` : 'Baixando';
+  const rotulo = `Link ${posicao} de ${total}`;
   setProgress(0, rotulo);
   setSpeed('');
+
   let failure = null;
   let wasCancelled = false;
-  let downloadUrl = item.url;
+  let downloadUrl = item.m3u8 || item.url;
 
   try {
-    // URL de página → tenta extrair o m3u8 antes de baixar (mesma lógica do download único).
-    // Se falhar (ex.: sites que o yt-dlp já suporta direto, como YouTube), usa a URL original.
-    if (isPageUrl(item.url)) {
+    // URL de página → tenta extrair o m3u8 antes de baixar. Se falhar (ex.:
+    // sites que o yt-dlp já suporta direto), usa a URL original.
+    if (!item.m3u8 && isPageUrl(item.url)) {
       setItemState(item, 'downloading', 0, 'Extraindo vídeo da página...');
       try {
-        const extRes = await fetch(`${API}/extract`, {
+        const extRes  = await fetch(`${API}/extract`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url: item.url }),
         });
         const extData = await extRes.json();
-        if (extRes.ok && extData.m3u8) downloadUrl = extData.m3u8;
+        if (extRes.ok && extData.m3u8) {
+          downloadUrl = item.m3u8 = extData.m3u8;
+          if (extData.title && item.title === item.url) item.title = extData.title;
+        }
       } catch {
         // sem extração: cai no fluxo original com item.url
       }
@@ -467,11 +446,26 @@ async function downloadItem(item, posicao, total) {
   else if (item.status !== 'done') setItemState(item, 'error', item.percent, 'Falha no download.');
 }
 
+// ── fila sequencial ────────────────────────────────────────────
 async function startBatch() {
   if (batchRunning) return;
 
-  const queue = playlistItems.filter(i => i.selected && i.status !== 'done');
-  if (!queue.length) return showError('Selecione ao menos um vídeo.');
+  // links recém-colados podem ainda estar sendo analisados
+  const analises = queue.map(i => i.pending).filter(Boolean);
+  if (analises.length) {
+    setBusy(true);
+    showProgress();
+    setProgress(0, 'Analisando links...');
+    setSpeed('');
+    await Promise.allSettled(analises);
+    setBusy(false);
+  }
+
+  const lote = queue.filter(i => i.selected && i.status !== 'done');
+  if (!lote.length) {
+    hideProgress();
+    return showError('Selecione ao menos um link.');
+  }
 
   hideError();
   cancelRequested = false;
@@ -480,12 +474,12 @@ async function startBatch() {
   updateCounts();
   showProgress();   // o medidor acompanha o item atual da fila
 
-  for (let i = 0; i < queue.length; i++) {
-    const item = queue[i];
+  for (let i = 0; i < lote.length; i++) {
+    const item = lote[i];
     if (cancelRequested) break;
     // pode ter sido removido ou desmarcado enquanto a fila andava
-    if (!playlistItems.includes(item) || !item.selected) continue;
-    await downloadItem(item, i + 1, queue.length);
+    if (!queue.includes(item) || !item.selected) continue;
+    await downloadItem(item, i + 1, lote.length);
   }
 
   batchRunning = false;
@@ -494,22 +488,18 @@ async function startBatch() {
   updateCounts();
   hideProgress();
 
-  if (cancelRequested) {
-    showError('Downloads cancelados.');
-  } else {
-    const failed = playlistItems.filter(i => i.status === 'error').length;
-    if (failed) showError(`${failed} vídeo(s) falharam. Os demais foram baixados.`);
-  }
+  if (cancelRequested) return showError('Downloads cancelados.');
+
+  const falhas = queue.filter(i => i.status === 'error').length;
+  if (falhas) showError(`${falhas} link(s) falharam. Os demais foram baixados.`);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('urlInput');
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Enter') startDownload();
-  });
-  input.addEventListener('input', () => {
-    pageTitle = '';
-    resolvedM3u8 = '';
-    if (!batchRunning) clearPlaylist();
-  });
+  if (input) {
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') addToQueue();
+    });
+  }
+  render();
 });
