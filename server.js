@@ -4,6 +4,7 @@ const path      = require('path');
 const fs        = require('fs');
 const { spawn, execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
+const { segundosParaCortar, cortarInicio } = require('./video/trim');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -105,6 +106,20 @@ function getFfmpegBin() {
   const local = path.join(__dirname, 'ffmpeg.exe');
   if (fs.existsSync(local)) return local;
   return process.env.FFMPEG_BIN || 'ffmpeg';
+}
+
+// Corta a abertura do vídeo quando a origem pede isso (ver video/trim.js).
+// Devolve o caminho a entregar — o original, se o corte não der certo.
+async function aplicarCorte(url, arquivo, send) {
+  const segundos = segundosParaCortar(url);
+  if (!segundos) return arquivo;
+
+  send({ type: 'progress', percent: 100, status: 'Cortando abertura...', speed: null, eta: null });
+  const cortado = await cortarInicio(arquivo, segundos, getFfmpegBin());
+
+  if (cortado === arquivo) console.log(`[trim] corte não aplicado em ${path.basename(arquivo)}`);
+  else console.log(`[trim] ${segundos}s cortados de ${path.basename(cortado)}`);
+  return cortado;
 }
 
 // Sites atrás de Cloudflare rejeitam o TLS fingerprint padrão do yt-dlp e devolvem 403.
@@ -602,7 +617,7 @@ function runFfmpegHLS(url, jobId, send, res, title) {
     }
   });
 
-  proc.on('close', code => {
+  proc.on('close', async code => {
     clearInterval(hb);
     activeJobs.delete(jobId);
 
@@ -629,14 +644,15 @@ function runFfmpegHLS(url, jobId, send, res, title) {
       return res.end();
     }
 
-    const basename = path.basename(outFile);
+    const pronto    = await aplicarCorte(url, outFile, send);
+    const basename  = path.basename(pronto);
     const safeTitle = sanitizeFilename(title);
-    const newName  = path.join(DOWNLOADS_DIR, `${safeTitle}_${jobId.slice(0,6)}.mp4`);
-    try { fs.renameSync(outFile, newName); } catch {}
+    const newName   = path.join(DOWNLOADS_DIR, `${safeTitle}_${jobId.slice(0,6)}.mp4`);
+    try { fs.renameSync(pronto, newName); } catch {}
     const finalName = fs.existsSync(newName) ? path.basename(newName) : basename;
     send({ type: 'done', filename: finalName, url: `/files/${encodeURIComponent(finalName)}` });
     res.end();
-    const cleanPath = fs.existsSync(newName) ? newName : outFile;
+    const cleanPath = fs.existsSync(newName) ? newName : pronto;
     setTimeout(() => { try { fs.unlinkSync(cleanPath); } catch {} }, 10*60*1000);
   });
 
@@ -726,7 +742,7 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
   proc.stdout.on('data', d => d.toString().split('\n').forEach(parse));
   proc.stderr.on('data', d => { const t = d.toString(); errLog += t; t.split('\n').forEach(parse); });
 
-  proc.on('close', code => {
+  proc.on('close', async code => {
     clearInterval(hb);
     activeJobs.delete(jobId);
 
@@ -774,15 +790,16 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
       return res.end();
     }
 
-    const basename  = path.basename(filename);
+    const pronto2   = await aplicarCorte(url, filename, send);
+    const basename  = path.basename(pronto2);
     const ytTitle   = sanitizeFilename(title);
     const ext2      = path.extname(basename) || '.mp4';
     const newName2  = path.join(DOWNLOADS_DIR, `${ytTitle}_${jobId.slice(0,6)}${ext2}`);
-    try { fs.renameSync(filename, newName2); } catch {}
+    try { fs.renameSync(pronto2, newName2); } catch {}
     const finalName2 = fs.existsSync(newName2) ? path.basename(newName2) : basename;
     send({ type:'done', filename: finalName2, url:`/files/${encodeURIComponent(finalName2)}` });
     res.end();
-    const cleanPath2 = fs.existsSync(newName2) ? newName2 : filename;
+    const cleanPath2 = fs.existsSync(newName2) ? newName2 : pronto2;
     setTimeout(() => { try { fs.unlinkSync(cleanPath2); } catch {} }, 10*60*1000);
   });
 }
