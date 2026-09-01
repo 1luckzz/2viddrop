@@ -1,0 +1,13 @@
+# Deploy no Render. O Render não lê o railway.json — sem este arquivo é
+# preciso escolher "Docker" na mão ao criar o serviço, e escolher "Node" por
+# engano sobe o app sem yt-dlp e sem ffmpeg, com todo download falhando.
+services:
+  - type: web
+    name: viddrop
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    autoDeploy: true
+    # a raiz serve o public/ — checagem barata, sem chamar o yt-dlp
+    healthCheckPath: /
