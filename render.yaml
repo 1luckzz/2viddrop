@@ -6,7 +6,9 @@ services:
     name: viddrop
     runtime: docker
     dockerfilePath: ./Dockerfile
-    plan: free
+    # O painel do Render nao deixa trocar o plano de um servico gerenciado por
+    # blueprint: o valor daqui e que vale. Mudar o plano e mudar esta linha.
+    plan: starter
     region: oregon
     autoDeploy: true
     # a raiz serve o public/ — checagem barata, sem chamar o yt-dlp
