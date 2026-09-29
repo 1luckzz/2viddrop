@@ -99,6 +99,7 @@ async function runDownload(url, title, onEvent) {
   });
 
   if (!res.ok) {
+    if (redirecionarSeSemAcesso(res)) throw new Error('Sessão encerrada.');
     let err = {};
     try { err = await res.json(); } catch {}
     throw new Error(err.error || 'Falha no download.');
@@ -192,6 +193,7 @@ async function resolveItem(item) {
       body: JSON.stringify({ url: item.url }),
     });
     const data = await res.json();
+    if (redirecionarSeSemAcesso(res)) return;
     if (res.ok && Array.isArray(data.entries)) entries = data.entries;
   } catch {}
 
@@ -457,6 +459,7 @@ async function extractM3u8(item) {
       body: JSON.stringify({ url: item.url }),
     });
     const data = await res.json();
+    if (redirecionarSeSemAcesso(res)) return null;
     if (res.ok && data.m3u8) {
       if (data.title && item.title === item.url) item.title = data.title;
       return data.m3u8;

@@ -106,6 +106,7 @@
 
       let data = {};
       try { data = await res.json(); } catch {}
+      if (redirecionarSeSemAcesso(res)) return;
 
       if (!res.ok || !data.success || !data.formats || !data.formats.length) {
         item.status = 'erro';

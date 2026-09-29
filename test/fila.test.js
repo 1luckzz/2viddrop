@@ -76,6 +76,8 @@ function load(fetchImpl) {
   const read = expr => vm.runInContext(expr, ctx);
   // triggerSave usa <a>.click(), que o DOM mínimo não tem: registramos as chamadas
   ctx.triggerSave = (url, name) => saves.push({ url, name });
+  // auth.js define isto na página; no sandbox nunca há sessão a perder
+  ctx.redirecionarSeSemAcesso = () => false;
 
   const settle = () => read('Promise.allSettled(queue.map(i => i.pending))');
   return { ctx, dom, saves, read, q: () => read('queue'), settle };
@@ -385,4 +387,18 @@ test('a fila não gira em falso quando nada mais pode ser baixado', async () => 
   // nenhum item elegível: precisa retornar em vez de girar no while
   await ctx.startBatch();
   assert.strictEqual(dom.byId.error.textContent, 'Selecione ao menos um link.');
+});
+
+test('resposta 401 no download chama o redirecionamento de acesso', async () => {
+  const { ctx, dom, settle } = load(async (url) => {
+    if (url.endsWith('/playlist')) return { ok: false, status: 401, json: async () => ({ error: 'Faça login para continuar.' }) };
+    return { ok: false, status: 401, json: async () => ({ error: 'Faça login para continuar.' }) };
+  });
+  const chamadas = [];
+  ctx.redirecionarSeSemAcesso = res => { chamadas.push(res.status); return true; };
+  dom.byId.urlInput.value = 'https://site.com/a';
+  ctx.addToQueue();
+  await settle();
+  await ctx.startBatch();
+  assert.ok(chamadas.includes(401), 'app.js avisou o auth.js do 401');
 });
