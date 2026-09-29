@@ -185,3 +185,123 @@ describe('banco fora do ar', () => {
     assert.strictEqual(pagina.local, null);
   });
 });
+
+// ── rotas /auth/* ─────────────────────────────────────────────
+// Daqui em diante as contas entram pela rota, como no site.
+async function cadastrar(c, email, senha = SENHA) {
+  const r = await c.pedir('POST', '/auth/cadastro', { email, senha });
+  assert.strictEqual(r.status, 201, `cadastro falhou: ${r.texto}`);
+  return r;
+}
+
+describe('cadastro', () => {
+  test('cria pendente, grava cookie e /auth/eu reflete', async () => {
+    const c = cliente(ctx.porta);
+    const r = await cadastrar(c, 'nova@exemplo.com');
+    assert.deepStrictEqual(r.json, { status: 'pending', aprovado: false });
+    assert.match(r.setCookie, /^meekz_sessao=[^;]+; Path=\/; HttpOnly; SameSite=Lax; Max-Age=2592000$/);
+    const eu = await c.pedir('GET', '/auth/eu');
+    assert.strictEqual(eu.status, 200);
+    assert.deepStrictEqual(eu.json, { email: 'nova@exemplo.com', status: 'pending', admin: false, aprovado: false });
+  });
+
+  test('normaliza o e-mail (espaços e maiúsculas)', async () => {
+    const c = cliente(ctx.porta);
+    await cadastrar(c, '  Ana@Exemplo.COM ');
+    const eu = await c.pedir('GET', '/auth/eu');
+    assert.strictEqual(eu.json.email, 'ana@exemplo.com');
+  });
+
+  test('e-mail repetido responde 409', async () => {
+    const c = cliente(ctx.porta);
+    await cadastrar(c, 'repetida@exemplo.com');
+    const r = await cliente(ctx.porta).pedir('POST', '/auth/cadastro', { email: 'REPETIDA@exemplo.com', senha: SENHA });
+    assert.strictEqual(r.status, 409);
+    assert.strictEqual(r.json.error, 'E-mail já cadastrado.');
+  });
+
+  test('e-mail inválido ou senha curta respondem 400 sem tocar no repositório', async () => {
+    const c = cliente(ctx.porta);
+    const antes = (await ctx.repo.listarPerfis()).length;
+    let r = await c.pedir('POST', '/auth/cadastro', { email: 'sem-arroba', senha: SENHA });
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.json.error, 'Informe um e-mail válido.');
+    r = await c.pedir('POST', '/auth/cadastro', { email: 'curta@exemplo.com', senha: '1234567' });
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.json.error, 'A senha precisa ter pelo menos 8 caracteres.');
+    assert.strictEqual((await ctx.repo.listarPerfis()).length, antes);
+  });
+
+  test('corpo ausente ou não-JSON responde 400, não 500', async () => {
+    const c = cliente(ctx.porta);
+    let r = await c.pedir('POST', '/auth/cadastro');
+    assert.strictEqual(r.status, 400);
+    r = await c.pedir('POST', '/auth/cadastro', 'isso não é json', { contentType: 'application/json' });
+    assert.strictEqual(r.status, 400);
+    r = await c.pedir('POST', '/auth/login');
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.json.error, 'Informe e-mail e senha.');
+  });
+
+  test('repositório fora responde 503', async () => {
+    ctx.repo.fora = true;
+    try {
+      const r = await cliente(ctx.porta).pedir('POST', '/auth/cadastro', { email: 'fora2@exemplo.com', senha: SENHA });
+      assert.strictEqual(r.status, 503);
+      assert.strictEqual(r.json.error, 'Serviço de login indisponível. Tente de novo.');
+    } finally { ctx.repo.fora = false; }
+  });
+});
+
+describe('login', () => {
+  test('entra com a senha certa e recebe status e cookie; e-mail com caixa diferente também entra', async () => {
+    await cadastrar(cliente(ctx.porta), 'login@exemplo.com', 'minha-senha-123');
+    const c = cliente(ctx.porta);
+    const r = await c.pedir('POST', '/auth/login', { email: 'LOGIN@Exemplo.com', senha: 'minha-senha-123' });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.json, { status: 'pending', aprovado: false });
+    assert.match(r.setCookie, /^meekz_sessao=/);
+    assert.strictEqual((await c.pedir('GET', '/auth/eu')).json.email, 'login@exemplo.com');
+  });
+
+  test('senha errada e e-mail inexistente dão a mesma resposta 401', async () => {
+    await cadastrar(cliente(ctx.porta), 'certa@exemplo.com', 'minha-senha-123');
+    const c = cliente(ctx.porta);
+    const errada = await c.pedir('POST', '/auth/login', { email: 'certa@exemplo.com', senha: 'outra-senha-123' });
+    const semConta = await c.pedir('POST', '/auth/login', { email: 'ninguem@exemplo.com', senha: 'outra-senha-123' });
+    assert.strictEqual(errada.status, 401);
+    assert.strictEqual(semConta.status, 401);
+    assert.deepStrictEqual(errada.json, semConta.json);
+    assert.strictEqual(errada.json.error, 'E-mail ou senha incorretos.');
+    assert.strictEqual(errada.setCookie, null, 'não grava cookie em falha');
+  });
+
+  test('admin pendente recebe aprovado: true no login', async () => {
+    // a conta do dono já foi criada na suíte "admin" (Tarefa 3), com a senha padrão
+    const r = await cliente(ctx.porta).pedir('POST', '/auth/login', { email: 'dono@meekz.com', senha: SENHA });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.aprovado, true);
+  });
+
+  test('login de conta sem perfil cria o perfil pendente', async () => {
+    // simula usuário criado direto no Supabase Auth, sem linha em viddrop_profiles
+    const { id } = await ctx.repo.criarUsuario('semperfil@exemplo.com', SENHA);
+    ctx.repo.apagarSoPerfil(id);
+    const c = cliente(ctx.porta);
+    const r = await c.pedir('POST', '/auth/login', { email: 'semperfil@exemplo.com', senha: SENHA });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.status, 'pending');
+    assert.ok(await ctx.repo.buscarPerfil(id), 'perfil recriado');
+  });
+});
+
+describe('sair', () => {
+  test('limpa o cookie e o pedido seguinte é anônimo', async () => {
+    const c = cliente(ctx.porta);
+    await cadastrar(c, 'sair@exemplo.com');
+    const r = await c.pedir('POST', '/auth/sair');
+    assert.strictEqual(r.status, 204);
+    assert.match(r.setCookie, /^meekz_sessao=; .*Max-Age=0/);
+    assert.strictEqual((await c.pedir('GET', '/auth/eu')).status, 401);
+  });
+});
