@@ -11,5 +11,15 @@ services:
     plan: starter
     region: oregon
     autoDeploy: true
-    # a raiz serve o public/ — checagem barata, sem chamar o yt-dlp
-    healthCheckPath: /
+    # A raiz redireciona para /login; /healthz responde 200 sem tocar em nada.
+    healthCheckPath: /healthz
+    # sync: false = o Render pede o valor no painel e nunca grava aqui.
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SECRET_KEY
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
