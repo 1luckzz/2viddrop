@@ -5,6 +5,17 @@ const fs        = require('fs');
 const { spawn, execFile } = require('child_process');
 const { v4: uuidv4 } = require('uuid');
 const { segundosParaCortar, cortarInicio } = require('./video/trim');
+const { montarAuth }               = require('./auth');
+const { criarClientes }            = require('./auth/supabase');
+const { criarRepositorioSupabase } = require('./auth/repositorio');
+
+// Sem login não tem site: recusa subir sem as variáveis, com mensagem clara.
+const OBRIGATORIAS = ['SUPABASE_URL', 'SUPABASE_SECRET_KEY', 'SESSION_SECRET', 'ADMIN_EMAIL'];
+const faltando = OBRIGATORIAS.filter(nome => !process.env[nome]);
+if (faltando.length) {
+  console.error(`Faltam variáveis de ambiente: ${faltando.join(', ')}. Veja a seção "Login e aprovação" do README.`);
+  process.exit(1);
+}
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -12,8 +23,30 @@ const PORT = process.env.PORT || 3000;
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
 if (!fs.existsSync(DOWNLOADS_DIR)) fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 
+app.set('trust proxy', 1);   // Render: req.secure vem do X-Forwarded-Proto
 app.use(cors());
 app.use(express.json());
+
+const auth = montarAuth(app, {
+  repositorio: criarRepositorioSupabase(criarClientes({
+    url: process.env.SUPABASE_URL,
+    chaveSecreta: process.env.SUPABASE_SECRET_KEY,
+  })),
+  adminEmail:    process.env.ADMIN_EMAIL,
+  segredoSessao: process.env.SESSION_SECRET,
+});
+
+const PUBLIC_DIR  = path.join(__dirname, 'public');
+const PRIVATE_DIR = path.join(__dirname, 'private');
+
+// ── PÁGINAS ──────────────────────────────────────────────────
+// A raiz passa a redirecionar; o health check do Render usa /healthz.
+app.get('/healthz', (req, res) => res.type('text').send('ok'));
+app.get(['/', '/index.html'],      auth.exigirAprovadoPagina, (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'index.html')));
+app.get(['/admin', '/admin.html'], auth.exigirAdminPagina,    (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'admin.html')));
+app.get('/login',      auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'login.html')));
+app.get('/cadastro',   auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'cadastro.html')));
+app.get('/aguardando', auth.exigirAguardando,   (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'aguardando.html')));
 
 // Teto de segurança: um m3u8 de transmissão ao vivo (ou que nunca fecha) faz o
 // downloader escrever pra sempre e encher o disco do servidor. Nada no caminho
@@ -88,7 +121,7 @@ function killProcessTree(proc) {
   }
 }
 
-app.post('/cancel/:jobId', (req, res) => {
+app.post('/cancel/:jobId', auth.exigirAprovadoApi, (req, res) => {
   const job = activeJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job não encontrado ou já finalizado.' });
   job.cancelled = true;
@@ -318,7 +351,7 @@ function scrapeListingEntries(html, baseUrl) {
 }
 
 // ── DIAGNÓSTICO ──────────────────────────────────────────────
-app.get('/test', (req, res) => {
+app.get('/test', auth.exigirAdminApi, (req, res) => {
   const ytdlp = getYtDlpBin();
   let out = '', err = '';
   const proc = spawn(ytdlp, ['--version'], { stdio: ['ignore','pipe','pipe'] });
@@ -331,7 +364,7 @@ app.get('/test', (req, res) => {
 
 
 // ── EXTRACT (pega m3u8 e título de uma URL de página) ────────
-app.post('/extract', async (req, res) => {
+app.post('/extract', auth.exigirAprovadoApi, async (req, res) => {
   const pageUrl = req.body.url || '';
   if (!pageUrl) return res.status(400).json({ error: 'URL obrigatória.' });
 
@@ -433,7 +466,7 @@ function collectEntries(node, seen, out) {
   });
 }
 
-app.post('/playlist', (req, res) => {
+app.post('/playlist', auth.exigirAprovadoApi, (req, res) => {
   const url = cleanPlaylistUrl(req.body.url || '');
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
 
@@ -493,7 +526,7 @@ app.post('/playlist', (req, res) => {
 });
 
 // ── INFO ─────────────────────────────────────────────────────
-app.post('/info', (req, res) => {
+app.post('/info', auth.exigirAprovadoApi, (req, res) => {
   const url = cleanUrl(req.body.url || '');
   if (!url) return res.status(400).json({ error: 'URL obrigatória.' });
 
@@ -520,7 +553,7 @@ app.post('/info', (req, res) => {
 });
 
 // ── DOWNLOAD ─────────────────────────────────────────────────
-app.post('/download', (req, res) => {
+app.post('/download', auth.exigirAprovadoApi, (req, res) => {
   const url       = cleanUrl(req.body.url || '');
   const format    = req.body.format || 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/bv*[height<=1080]+ba/b[height<=1080]/b';
   const audioOnly = !!req.body.audioOnly;
@@ -807,10 +840,10 @@ function runYtDlp(url, format, audioOnly, jobId, send, res, title) {
 // ── TWITTER/X ────────────────────────────────────────────────
 // Feature isolada: router próprio sob /api/twitter, sem relação com as rotas
 // de M3U8 acima (/extract, /playlist, /info, /download).
-app.use('/api/twitter', require('./twitter/routes'));
+app.use('/api/twitter', auth.exigirAprovadoApi, require('./twitter/routes'));
 
 // ── ARQUIVOS ─────────────────────────────────────────────────
-app.use('/files', (req, res, next) => {
+app.use('/files', auth.exigirAprovadoApi, (req, res, next) => {
   const file = path.join(DOWNLOADS_DIR, decodeURIComponent(path.basename(req.path)));
   if (fs.existsSync(file)) return res.download(file);
   next();
