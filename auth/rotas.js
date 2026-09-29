@@ -62,6 +62,31 @@ function criarRotas({ sessao, repositorio, mw }) {
     res.json({ email: u.email, status: u.status, admin: u.admin, aprovado: u.aprovado });
   });
 
+  // ── painel ──────────────────────────────────────────────────
+  router.get('/admin/usuarios', mw.exigirAdminApi, async (req, res) => {
+    try {
+      const perfis = await repositorio.listarPerfis();
+      res.json({
+        usuarios: perfis.map(p => ({
+          id: p.id, email: p.email, status: p.status,
+          created_at: p.created_at, reviewed_at: p.reviewed_at,
+          admin: mw.ehAdmin(p.email),
+        })),
+      });
+    } catch (e) { responderErro(res, e); }
+  });
+
+  router.post('/admin/usuarios/:id/status', mw.exigirAdminApi, async (req, res) => {
+    const status = req.body && req.body.status;
+    if (!STATUS.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    if (req.params.id === req.usuario.id) return res.status(400).json({ error: 'O admin não muda o próprio status.' });
+    try {
+      const perfil = await repositorio.mudarStatus(req.params.id, status);
+      if (!perfil) return res.status(404).json({ error: 'Usuário não encontrado.' });
+      res.json({ id: perfil.id, status: perfil.status });
+    } catch (e) { responderErro(res, e); }
+  });
+
   return router;
 }
 

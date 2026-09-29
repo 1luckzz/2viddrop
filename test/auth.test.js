@@ -305,3 +305,86 @@ describe('sair', () => {
     assert.strictEqual((await c.pedir('GET', '/auth/eu')).status, 401);
   });
 });
+
+// ── painel /admin/usuarios ────────────────────────────────────
+describe('painel do admin', () => {
+  async function entrarComoAdmin() {
+    const c = cliente(ctx.porta);
+    const r = await c.pedir('POST', '/auth/login', { email: 'dono@meekz.com', senha: SENHA });
+    if (r.status !== 200) await cadastrar(c, 'dono@meekz.com');
+    return c;
+  }
+
+  test('lista todos, mais novo primeiro, com a linha do admin marcada', async () => {
+    const admin = await entrarComoAdmin();
+    await cadastrar(cliente(ctx.porta), 'lista-a@exemplo.com');
+    await cadastrar(cliente(ctx.porta), 'lista-b@exemplo.com');
+    const r = await admin.pedir('GET', '/admin/usuarios');
+    assert.strictEqual(r.status, 200);
+    const emails = r.json.usuarios.map(u => u.email);
+    assert.ok(emails.indexOf('lista-b@exemplo.com') < emails.indexOf('lista-a@exemplo.com'), 'mais novo primeiro');
+    const dono = r.json.usuarios.find(u => u.email === 'dono@meekz.com');
+    assert.strictEqual(dono.admin, true);
+    assert.strictEqual(r.json.usuarios.find(u => u.email === 'lista-a@exemplo.com').admin, false);
+    for (const u of r.json.usuarios) {
+      assert.deepStrictEqual(Object.keys(u).sort(), ['admin', 'created_at', 'email', 'id', 'reviewed_at', 'status']);
+    }
+  });
+
+  test('aprova, bloqueia e volta a pendente, gravando reviewed_at', async () => {
+    const admin = await entrarComoAdmin();
+    const c = cliente(ctx.porta);
+    await cadastrar(c, 'muda@exemplo.com');
+    const { id } = (await ctx.repo.listarPerfis()).find(p => p.email === 'muda@exemplo.com');
+
+    let r = await admin.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'approved' });
+    assert.strictEqual(r.status, 200);
+    assert.deepStrictEqual(r.json, { id, status: 'approved' });
+    assert.strictEqual((await c.pedir('POST', '/protegida', {})).status, 200, 'aprovação vale na hora');
+    assert.ok((await ctx.repo.buscarPerfil(id)).reviewed_at);
+
+    r = await admin.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'blocked' });
+    assert.strictEqual(r.json.status, 'blocked');
+    assert.strictEqual((await c.pedir('POST', '/protegida', {})).status, 403, 'bloqueio vale na hora');
+
+    r = await admin.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'pending' });
+    assert.strictEqual(r.json.status, 'pending');
+  });
+
+  test('status inventado responde 400 e não grava', async () => {
+    const admin = await entrarComoAdmin();
+    await cadastrar(cliente(ctx.porta), 'invalido@exemplo.com');
+    const { id } = (await ctx.repo.listarPerfis()).find(p => p.email === 'invalido@exemplo.com');
+    for (const ruim of ['admin', 'approved ', 'APPROVED', '', null, 42]) {
+      const r = await admin.pedir('POST', `/admin/usuarios/${id}/status`, { status: ruim });
+      assert.strictEqual(r.status, 400, `deveria recusar ${JSON.stringify(ruim)}`);
+      assert.strictEqual(r.json.error, 'Status inválido.');
+    }
+    assert.strictEqual((await ctx.repo.buscarPerfil(id)).status, 'pending');
+  });
+
+  test('admin não muda o próprio status', async () => {
+    const admin = await entrarComoAdmin();
+    const { id } = (await ctx.repo.listarPerfis()).find(p => p.email === 'dono@meekz.com');
+    const r = await admin.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'blocked' });
+    assert.strictEqual(r.status, 400);
+    assert.strictEqual(r.json.error, 'O admin não muda o próprio status.');
+  });
+
+  test('id inexistente responde 404', async () => {
+    const admin = await entrarComoAdmin();
+    const r = await admin.pedir('POST', '/admin/usuarios/00000000-0000-4000-8000-000000000000/status', { status: 'approved' });
+    assert.strictEqual(r.status, 404);
+    assert.strictEqual(r.json.error, 'Usuário não encontrado.');
+  });
+
+  test('aprovado comum e anônimo não acessam o painel', async () => {
+    const c = cliente(ctx.porta);
+    await cadastrar(c, 'comum@exemplo.com');
+    const { id } = (await ctx.repo.listarPerfis()).find(p => p.email === 'comum@exemplo.com');
+    await ctx.repo.mudarStatus(id, 'approved');
+    assert.strictEqual((await c.pedir('GET', '/admin/usuarios')).status, 403);
+    assert.strictEqual((await c.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'blocked' })).status, 403);
+    assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/usuarios')).status, 401);
+  });
+});
