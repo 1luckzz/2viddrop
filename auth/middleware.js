@@ -11,6 +11,12 @@ const MSG = {
   indisponivel: 'Serviço de login indisponível. Tente de novo.',
 };
 
+// ErroIndisponivel esconde a causa do cliente; no log ela precisa aparecer.
+function descrever(e) {
+  const causa = e && e.causa;
+  return causa ? `${e.message} (${causa.message || causa})` : (e && e.message) || String(e);
+}
+
 function normalizar(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
@@ -60,7 +66,7 @@ function criarMiddlewares({ sessao, repositorio, adminEmail }) {
     return async (req, res, next) => {
       let u;
       try { u = await carregarUsuario(req, res); }
-      catch (e) { console.error('[auth] perfil indisponível:', e.message); return indisponivel(res, api); }
+      catch (e) { console.error('[auth] perfil indisponível:', descrever(e)); return indisponivel(res, api); }
 
       if (!u)          return api ? res.status(401).json({ error: MSG.login })          : res.redirect('/login');
       if (!u.aprovado) return api ? res.status(403).json({ error: mensagemStatus(u) })  : res.redirect('/aguardando');
@@ -74,7 +80,7 @@ function criarMiddlewares({ sessao, repositorio, adminEmail }) {
   async function redirecionarLogado(req, res, next) {
     let u;
     try { u = await carregarUsuario(req, res); }
-    catch (e) { console.error('[auth] perfil indisponível:', e.message); return next(); }   // banco fora: deixa ver a página
+    catch (e) { console.error('[auth] perfil indisponível:', descrever(e)); return next(); }   // banco fora: deixa ver a página
     if (!u) return next();
     res.redirect(u.aprovado ? '/' : '/aguardando');
   }
@@ -83,7 +89,7 @@ function criarMiddlewares({ sessao, repositorio, adminEmail }) {
   async function exigirAguardando(req, res, next) {
     let u;
     try { u = await carregarUsuario(req, res); }
-    catch (e) { console.error('[auth] perfil indisponível:', e.message); return indisponivel(res, false); }
+    catch (e) { console.error('[auth] perfil indisponível:', descrever(e)); return indisponivel(res, false); }
     if (!u) return res.redirect('/login');
     if (u.aprovado) return res.redirect('/');
     next();
@@ -100,4 +106,4 @@ function criarMiddlewares({ sessao, repositorio, adminEmail }) {
   };
 }
 
-module.exports = { criarMiddlewares, normalizar, MSG };
+module.exports = { criarMiddlewares, normalizar, descrever, MSG };

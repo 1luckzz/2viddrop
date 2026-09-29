@@ -17,11 +17,16 @@ const SENHA   = 'senha-forte-123';
 const { assinar } = criarSessao(SEGREDO);
 
 // ── servidor de teste ─────────────────────────────────────────
-function subir() {
+function subir(extras = {}) {
   const app  = express();
   const repo = criarRepositorioMemoria();
   app.use(express.json());
-  const mw = montarAuth(app, { repositorio: repo, adminEmail: ADMIN, segredoSessao: SEGREDO });
+  // a suíte faz dezenas de logins do mesmo IP: o limite só aperta no teste que o exercita
+  const mw = montarAuth(app, {
+    repositorio: repo, adminEmail: ADMIN, segredoSessao: SEGREDO,
+    limiteTentativas: { max: 10_000, janelaMs: 60_000 },
+    ...extras,
+  });
 
   app.get('/pagina',     mw.exigirAprovadoPagina, (req, res) => res.send('pagina'));
   app.post('/protegida', mw.exigirAprovadoApi,    (req, res) => res.json({ ok: true, email: req.usuario.email }));
@@ -183,6 +188,21 @@ describe('banco fora do ar', () => {
     const pagina = await c.pedir('GET', '/pagina');
     assert.strictEqual(pagina.status, 503);
     assert.strictEqual(pagina.local, null);
+  });
+
+  test('o log do servidor mostra a causa real, não só "indisponível"', async () => {
+    const c = cliente(ctx.porta);
+    await entrarDireto(c, 'fora-log@exemplo.com');
+    ctx.repo.fora = true;
+    const original = console.error;
+    const logs = [];
+    console.error = (...args) => logs.push(args.map(String).join(' '));
+    try {
+      await c.pedir('POST', '/protegida', {});
+      await cliente(ctx.porta).pedir('POST', '/auth/cadastro', { email: 'fora-log2@exemplo.com', senha: SENHA });
+    } finally { console.error = original; }
+    assert.strictEqual(logs.length, 2);
+    for (const linha of logs) assert.match(linha, /simulado/, `log sem a causa: ${linha}`);
   });
 });
 
@@ -386,5 +406,25 @@ describe('painel do admin', () => {
     assert.strictEqual((await c.pedir('GET', '/admin/usuarios')).status, 403);
     assert.strictEqual((await c.pedir('POST', `/admin/usuarios/${id}/status`, { status: 'blocked' })).status, 403);
     assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/usuarios')).status, 401);
+  });
+});
+
+// ── limite de tentativas ──────────────────────────────────────
+describe('limite de tentativas de login e cadastro por IP', () => {
+  let proprio;
+  before(async () => { proprio = await subir({ limiteTentativas: { max: 3, janelaMs: 60_000 } }); });
+  after(() => proprio.server.close());
+
+  test('a quarta tentativa na janela responde 429 com Retry-After', async () => {
+    const c = cliente(proprio.porta);
+    for (let i = 0; i < 3; i++) {
+      const r = await c.pedir('POST', '/auth/login', { email: 'ninguem@exemplo.com', senha: 'errada-123' });
+      assert.strictEqual(r.status, 401, `tentativa ${i + 1}`);
+    }
+    const r = await c.pedir('POST', '/auth/login', { email: 'ninguem@exemplo.com', senha: 'errada-123' });
+    assert.strictEqual(r.status, 429);
+    assert.strictEqual(r.json.error, 'Muitas tentativas. Tente de novo em alguns minutos.');
+    const cadastro = await c.pedir('POST', '/auth/cadastro', { email: 'novo@exemplo.com', senha: SENHA });
+    assert.strictEqual(cadastro.status, 429, 'cadastro divide a mesma janela');
   });
 });

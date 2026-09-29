@@ -4,17 +4,19 @@
 // Toda resposta de erro é JSON com a chave `error`, como o resto do servidor.
 const express = require('express');
 const { ErroEmailExistente } = require('./erros');
-const { normalizar } = require('./middleware');
+const { normalizar, descrever } = require('./middleware');
+const { criarLimitador } = require('./limite');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATUS   = ['pending', 'approved', 'blocked'];
 
-function criarRotas({ sessao, repositorio, mw }) {
-  const router = express.Router();
+function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
+  const router  = express.Router();
+  const limitar = criarLimitador(limiteTentativas);
 
   function responderErro(res, e) {
     if (e instanceof ErroEmailExistente) return res.status(409).json({ error: e.message });
-    console.error('[auth]', e && e.message);
+    console.error('[auth]', descrever(e));
     return res.status(503).json({ error: mw.MSG.indisponivel });
   }
 
@@ -23,7 +25,7 @@ function criarRotas({ sessao, repositorio, mw }) {
     return { status: perfil.status, aprovado: mw.ehAdmin(perfil.email) || perfil.status === 'approved' };
   }
 
-  router.post('/auth/cadastro', async (req, res) => {
+  router.post('/auth/cadastro', limitar, async (req, res) => {
     const email = normalizar(req.body && req.body.email);
     const senha = req.body && req.body.senha;
     if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Informe um e-mail válido.' });
@@ -36,7 +38,7 @@ function criarRotas({ sessao, repositorio, mw }) {
     } catch (e) { responderErro(res, e); }
   });
 
-  router.post('/auth/login', async (req, res) => {
+  router.post('/auth/login', limitar, async (req, res) => {
     const email = normalizar(req.body && req.body.email);
     const senha = req.body && req.body.senha;
     if (!email || typeof senha !== 'string' || !senha) return res.status(400).json({ error: 'Informe e-mail e senha.' });

@@ -6,12 +6,12 @@ const { criarSessao }      = require('./sessao');
 const { criarMiddlewares } = require('./middleware');
 const { criarRotas }       = require('./rotas');
 
-function montarAuth(app, { repositorio, adminEmail, segredoSessao }) {
+function montarAuth(app, { repositorio, adminEmail, segredoSessao, limiteTentativas }) {
   const sessao = criarSessao(segredoSessao);
   const mw     = criarMiddlewares({ sessao, repositorio, adminEmail });
 
   app.use(mw.carregarSessao);
-  app.use(criarRotas({ sessao, repositorio, mw }));
+  app.use(criarRotas({ sessao, repositorio, mw, limiteTentativas }));
 
   // express.json() responde JSON malformado com 400 mas sem corpo; padroniza.
   app.use((err, req, res, next) => {
