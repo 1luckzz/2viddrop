@@ -1,0 +1,169 @@
+/* ─────────────────────────────────────────────────────────────
+   Páginas de acesso (login, cadastro, espera) e painel admin.
+   Carregado depois de style.css: reaproveita variáveis e .deck.
+   ───────────────────────────────────────────────────────────── */
+
+.deck-auth { max-width: 440px; }
+
+.auth-tag {
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+/* ── formulários ─────────────────────────────────────────────── */
+.auth-form { display: flex; flex-direction: column; }
+.auth-form .field-label { margin-top: 16px; }
+.auth-form .field-label:first-child { margin-top: 0; }
+
+.auth-input {
+  width: 100%;
+  padding: 13px 15px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 14px;
+  color: var(--screen-txt);
+  background: var(--recess);
+  border: 1px solid var(--recess-edge);
+  border-radius: 3px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7);
+  outline: none;
+}
+.auth-input::placeholder { color: var(--screen-dim); }
+.auth-input:focus-visible {
+  border-color: var(--amber);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7), 0 0 0 2px rgba(255, 154, 31, .5);
+}
+
+.auth-btn {
+  margin-top: 22px;
+  padding: 14px 24px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink);
+  cursor: pointer;
+  background: linear-gradient(180deg, var(--btn-top), var(--btn-bot));
+  border: 1px solid var(--panel-lo);
+  border-top-color: #fff;
+  border-radius: 3px;
+  box-shadow: 0 2px 0 var(--panel-lo), 0 3px 6px rgba(0, 0, 0, .28);
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+.auth-btn:hover:not(:disabled) { background: linear-gradient(180deg, var(--btn-top-hi), var(--btn-bot-hi)); }
+.auth-btn:active { transform: translateY(2px); box-shadow: 0 0 0 var(--panel-lo), 0 1px 3px rgba(0, 0, 0, .3); }
+.auth-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.auth-btn:disabled { opacity: .5; cursor: default; transform: none; }
+.auth-btn-secundario { background: none; box-shadow: none; border-top-color: var(--panel-lo); }
+.auth-btn-secundario:hover:not(:disabled) { background: none; border-color: var(--ink-soft); }
+
+.auth-link { margin: 18px 0 0; font-size: 13.5px; color: var(--ink-soft); text-align: center; }
+.auth-link a { color: var(--ink); }
+
+.auth-acoes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+.auth-acoes .auth-btn { margin-top: 0; flex: 1; }
+
+/* ── tela de espera ──────────────────────────────────────────── */
+.espera {
+  padding: 18px 16px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--screen-txt);
+  background: var(--recess);
+  border-radius: 3px;
+  border-left: 3px solid var(--amber);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .7);
+}
+body.is-blocked .espera { border-left-color: var(--rec); }
+.espera-email {
+  display: block;
+  margin-top: 10px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 12.5px;
+  color: var(--screen-dim);
+}
+
+/* ── faixa de sessão (index e admin) ─────────────────────────── */
+.sessao {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-basis: 100%;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.sessao-email {
+  flex: 1;
+  min-width: 0;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── painel admin ────────────────────────────────────────────── */
+.abas { display: flex; gap: 6px; margin-bottom: 14px; }
+.aba {
+  flex: 1;
+  padding: 9px 6px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--panel-lo);
+  border-radius: 3px;
+}
+.aba.is-active { color: var(--ink); background: linear-gradient(180deg, var(--btn-top), var(--btn-bot)); }
+.aba:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+
+.usuarios {
+  padding: 6px;
+  border-radius: 3px;
+  background: var(--recess);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, .7);
+}
+.usuario {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 8px;
+  color: var(--screen-txt);
+}
+.usuario + .usuario { border-top: 1px solid rgba(255, 255, 255, .07); }
+.usuario-email {
+  flex: 1;
+  min-width: 0;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.usuario-data { font-size: 12px; color: var(--screen-dim); }
+.usuario-admin { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--amber); }
+.usuario-acoes { display: flex; gap: 6px; }
+.usuario-acoes button {
+  padding: 6px 10px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--screen-txt);
+  cursor: pointer;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 3px;
+}
+.usuario-acoes button:hover:not(:disabled) { border-color: var(--amber); color: var(--amber); }
+.usuario-acoes button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.usuario-acoes button:disabled { opacity: .45; cursor: default; }
+.usuarios-vazio { margin: 0; padding: 18px; text-align: center; font-size: 13.5px; color: var(--screen-dim); }

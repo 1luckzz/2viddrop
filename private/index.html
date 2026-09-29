@@ -7,7 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Azeret+Mono:wght@400..700&family=Saira+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="/style.css?v=5" />
+  <link rel="stylesheet" href="/auth.css?v=1" />
   <script>
     (function () {
       var t;
@@ -42,6 +43,11 @@
       <div class="lamp" aria-hidden="true">
         <span class="lamp-led"></span>
         <span class="lamp-text"></span>
+      </div>
+      <div id="sessaoFaixa" class="sessao hidden">
+        <span id="sessaoEmail" class="sessao-email"></span>
+        <a id="sessaoAdmin" class="tw-link hidden" href="/admin">Admin</a>
+        <button type="button" class="tw-link" data-sair>Sair</button>
       </div>
     </header>
 
@@ -112,8 +118,9 @@
     </div>
 
   </main>
-  <script src="theme.js"></script>
-  <script src="app.js?v=12"></script>
-  <script src="twitter.js?v=1"></script>
+  <script src="/theme.js"></script>
+  <script src="/auth.js?v=1"></script>
+  <script src="/app.js?v=12"></script>
+  <script src="/twitter.js?v=1"></script>
 </body>
 </html>
