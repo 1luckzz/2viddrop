@@ -264,7 +264,7 @@ describe('rotas /api/twitter', () => {
 
 // ── 1: guarda de regressão do M3U8 ───────────────────────────
 describe('downloader M3U8 permanece intacto', () => {
-  const html   = fs.readFileSync(path.join(RAIZ, 'public/index.html'), 'utf8');
+  const html   = fs.readFileSync(path.join(RAIZ, 'private/index.html'), 'utf8');
   const appJs  = fs.readFileSync(path.join(RAIZ, 'public/app.js'), 'utf8');
   const server = fs.readFileSync(path.join(RAIZ, 'server.js'), 'utf8');
 
