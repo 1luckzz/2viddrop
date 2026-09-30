@@ -7,7 +7,7 @@ Acesso restrito: quem quer usar cria uma conta e o dono aprova.
 
 ## Requisitos
 
-- **Node.js** 20.6+
+- **Node.js** 22+
 - Um projeto no **Supabase** (Auth + Postgres) para as contas
 - **yt-dlp** instalado e no PATH
 - **ffmpeg** instalado (para merge de vídeo+áudio)
