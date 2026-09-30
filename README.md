@@ -109,6 +109,13 @@ node --env-file=.env server.js
 
 Sem as quatro variáveis o servidor não sobe e diz qual falta.
 
+Esqueceu a senha (ou a conta já existia no projeto Supabase compartilhado)? Defina uma
+nova pelo terminal, com o `.env` preenchido:
+
+```bash
+node --env-file=.env scripts/definir-senha.js seu@email.com "senha nova"
+```
+
 ---
 
 ## Deploy no Render
