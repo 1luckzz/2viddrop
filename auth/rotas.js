@@ -20,8 +20,19 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     return res.status(503).json({ error: mw.MSG.indisponivel });
   }
 
-  function entrar(req, res, perfil) {
+  // Registro para a aba IPs do admin. Não pode derrubar o login: falha vira só log.
+  async function registrarLogin(req, perfil) {
+    try {
+      await repositorio.registrarLogin({
+        userId: perfil.id, email: perfil.email,
+        ip: req.ip || null, userAgent: req.get('user-agent') || null,
+      });
+    } catch (e) { console.error('[auth] registro de login falhou:', descrever(e)); }
+  }
+
+  async function entrar(req, res, perfil) {
     sessao.gravarCookie(req, res, sessao.assinar({ id: perfil.id, email: perfil.email }));
+    await registrarLogin(req, perfil);
     return { status: perfil.status, aprovado: mw.ehAdmin(perfil.email) || perfil.status === 'approved' };
   }
 
@@ -34,7 +45,7 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     }
     try {
       const perfil = await repositorio.criarUsuario(email, senha);
-      res.status(201).json(entrar(req, res, perfil));
+      res.status(201).json(await entrar(req, res, perfil));
     } catch (e) { responderErro(res, e); }
   });
 
@@ -47,7 +58,7 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
       if (!usuario) return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
       const perfil = (await repositorio.buscarPerfil(usuario.id))
                   || (await repositorio.garantirPerfil(usuario.id, usuario.email));
-      res.json(entrar(req, res, perfil));
+      res.json(await entrar(req, res, perfil));
     } catch (e) { responderErro(res, e); }
   });
 
@@ -73,6 +84,21 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
           id: p.id, email: p.email, status: p.status,
           created_at: p.created_at, reviewed_at: p.reviewed_at,
           admin: mw.ehAdmin(p.email),
+        })),
+      });
+    } catch (e) { responderErro(res, e); }
+  });
+
+  // Últimos logins (aba IPs). ?limite= até 500; padrão 200.
+  router.get('/admin/logins', mw.exigirAdminApi, async (req, res) => {
+    const pedido = Number.parseInt(req.query.limite, 10);
+    const limite = Number.isInteger(pedido) && pedido > 0 ? Math.min(pedido, 500) : 200;
+    try {
+      const logins = await repositorio.listarLogins(limite);
+      res.json({
+        logins: logins.map(l => ({
+          id: l.id, user_id: l.user_id, email: l.email, ip: l.ip,
+          user_agent: l.user_agent, created_at: l.created_at,
         })),
       });
     } catch (e) { responderErro(res, e); }

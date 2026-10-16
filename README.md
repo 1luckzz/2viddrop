@@ -96,6 +96,8 @@ O site inteiro fica atrás de login. Fluxo:
    e-mail é sempre tratado como aprovado e admin) e abre `/admin`.
 3. Em `/admin`, aba **Pendentes**, clique **Aprovar**. A pessoa recarrega `/aguardando`
    e entra. **Bloquear** tira o acesso na hora.
+4. A aba **IPs** lista os últimos logins (IP, conta, navegador e data). Cada login ou
+   cadastro bem-sucedido grava uma linha na tabela `viddrop_logins`.
 
 As contas ficam no Supabase Auth e o status na tabela `viddrop_profiles`
 (migração `viddrop_profiles`, projeto `spm-homolog`). Só o servidor acessa a tabela,

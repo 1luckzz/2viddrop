@@ -8,10 +8,12 @@ const { ErroEmailExistente, ErroIndisponivel } = require('../../auth/erros');
 function criarRepositorioMemoria() {
   const contas  = new Map();   // email -> { id, senha }
   const perfis  = new Map();   // id -> perfil
+  const logins  = [];          // registros de login, em ordem de chegada
   let relogio = 0;             // created_at crescente e determinístico
 
   const repo = {
     fora: false,
+    falharRegistro: false,   // simula falha só na gravação do login
 
     async criarUsuario(email, senha) {
       checar();
@@ -56,6 +58,20 @@ function criarRepositorioMemoria() {
       perfil.status = status;
       perfil.reviewed_at = new Date().toISOString();
       return perfil;
+    },
+
+    async registrarLogin({ userId, email, ip, userAgent }) {
+      checar();
+      if (repo.falharRegistro) throw new ErroIndisponivel(new Error('registro simulado'));
+      logins.push({
+        id: logins.length + 1, user_id: userId, email, ip: ip || null, user_agent: userAgent || null,
+        created_at: new Date(1_700_000_000_000 + (relogio++) * 1000).toISOString(),
+      });
+    },
+
+    async listarLogins(limite) {
+      checar();
+      return logins.slice().reverse().slice(0, limite);
     },
 
     // só para os testes: simula usuário apagado no Supabase

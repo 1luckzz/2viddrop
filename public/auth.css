@@ -167,3 +167,11 @@ body.is-blocked .espera { border-left-color: var(--rec); }
 .usuario-acoes button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .usuario-acoes button:disabled { opacity: .45; cursor: default; }
 .usuarios-vazio { margin: 0; padding: 18px; text-align: center; font-size: 13.5px; color: var(--screen-dim); }
+
+/* ── aba IPs ─────────────────────────────────────────────────── */
+.login-ip {
+  min-width: 118px;
+  font-family: 'Azeret Mono', ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--amber);
+}

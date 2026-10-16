@@ -428,3 +428,64 @@ describe('limite de tentativas de login e cadastro por IP', () => {
     assert.strictEqual(cadastro.status, 429, 'cadastro divide a mesma janela');
   });
 });
+
+// ── registro de logins (aba IPs) ──────────────────────────────
+describe('registro de IPs de login', () => {
+  async function entrarComoAdmin() {
+    const c = cliente(ctx.porta);
+    const r = await c.pedir('POST', '/auth/login', { email: 'dono@meekz.com', senha: SENHA });
+    if (r.status !== 200) await cadastrar(c, 'dono@meekz.com');
+    return c;
+  }
+
+  test('cadastro e login gravam IP, e-mail e navegador; a lista vem do mais novo para o mais antigo', async () => {
+    const antes = (await ctx.repo.listarLogins(500)).length;
+    const c = cliente(ctx.porta);
+    await c.pedir('POST', '/auth/cadastro', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/1.0' } });
+    await c.pedir('POST', '/auth/sair');
+    await c.pedir('POST', '/auth/login', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/2.0' } });
+    const logins = await ctx.repo.listarLogins(500);
+    assert.strictEqual(logins.length, antes + 2, 'um registro por cadastro e um por login');
+    assert.strictEqual(logins[0].email, 'ip-a@exemplo.com');
+    assert.strictEqual(logins[0].user_agent, 'NavegadorTeste/2.0', 'o mais novo primeiro');
+    assert.strictEqual(logins[1].user_agent, 'NavegadorTeste/1.0');
+    assert.ok(logins[0].ip, 'ip preenchido');
+    assert.ok(logins[0].user_id && logins[0].created_at);
+  });
+
+  test('senha errada não gera registro', async () => {
+    const antes = (await ctx.repo.listarLogins(500)).length;
+    await cliente(ctx.porta).pedir('POST', '/auth/login', { email: 'ip-a@exemplo.com', senha: 'errada-12345' });
+    assert.strictEqual((await ctx.repo.listarLogins(500)).length, antes);
+  });
+
+  test('GET /admin/logins devolve os últimos logins só para o admin', async () => {
+    const admin = await entrarComoAdmin();
+    const r = await admin.pedir('GET', '/admin/logins');
+    assert.strictEqual(r.status, 200);
+    assert.ok(Array.isArray(r.json.logins) && r.json.logins.length > 0);
+    assert.deepStrictEqual(Object.keys(r.json.logins[0]).sort(), ['created_at', 'email', 'id', 'ip', 'user_agent', 'user_id']);
+    assert.strictEqual(r.json.logins[0].email, 'dono@meekz.com', 'o login do admin agora é o mais recente');
+
+    const comum = cliente(ctx.porta);
+    await cadastrar(comum, 'ip-comum@exemplo.com');
+    assert.strictEqual((await comum.pedir('GET', '/admin/logins')).status, 403);
+    assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/logins')).status, 401);
+  });
+
+  test('a listagem respeita o limite', async () => {
+    const admin = await entrarComoAdmin();
+    const r = await admin.pedir('GET', '/admin/logins?limite=2');
+    assert.strictEqual(r.json.logins.length, 2);
+  });
+
+  test('falha ao gravar o registro não impede o login', async () => {
+    const c = cliente(ctx.porta);
+    await cadastrar(c, 'ip-falha@exemplo.com');
+    ctx.repo.falharRegistro = true;
+    try {
+      const r = await c.pedir('POST', '/auth/login', { email: 'ip-falha@exemplo.com', senha: SENHA });
+      assert.strictEqual(r.status, 200);
+    } finally { ctx.repo.falharRegistro = false; }
+  });
+});

@@ -5,6 +5,7 @@
 const { ErroEmailExistente, ErroIndisponivel } = require('./erros');
 
 const TABELA  = 'viddrop_profiles';
+const LOGINS  = 'viddrop_logins';
 const COLUNAS = 'id, email, status, created_at, reviewed_at';
 
 function criarRepositorioSupabase({ admin, loginComSenha }) {
@@ -41,6 +42,20 @@ function criarRepositorioSupabase({ admin, loginComSenha }) {
 
     async listarPerfis() {
       const { data, error } = await admin.from(TABELA).select(COLUNAS).order('created_at', { ascending: false });
+      if (error) throw falha(error);
+      return data;
+    },
+
+    async registrarLogin({ userId, email, ip, userAgent }) {
+      const { error } = await admin.from(LOGINS).insert({ user_id: userId, email, ip, user_agent: userAgent });
+      if (error) throw falha(error);
+    },
+
+    async listarLogins(limite) {
+      const { data, error } = await admin.from(LOGINS)
+        .select('id, user_id, email, ip, user_agent, created_at')
+        .order('created_at', { ascending: false }).order('id', { ascending: false })
+        .limit(limite);
       if (error) throw falha(error);
       return data;
     },
