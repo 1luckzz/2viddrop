@@ -168,7 +168,32 @@ body.is-blocked .espera { border-left-color: var(--rec); }
 .usuario-acoes button:disabled { opacity: .45; cursor: default; }
 .usuarios-vazio { margin: 0; padding: 18px; text-align: center; font-size: 13.5px; color: var(--screen-dim); }
 
-/* ── aba IPs ─────────────────────────────────────────────────── */
+/* ── aba Acessos ─────────────────────────────────────────────── */
+.filtro { display: flex; gap: 6px; margin-bottom: 10px; }
+.filtro-btn {
+  padding: 5px 10px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--panel-lo);
+  border-radius: 3px;
+}
+.filtro-btn.is-active { color: var(--ink); border-color: var(--ink-soft); }
+.filtro-btn:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.acesso-tipo {
+  min-width: 46px;
+  font-family: 'Saira Condensed', sans-serif;
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--screen-dim);
+}
+.acesso-tipo.is-login { color: var(--amber); }
 .login-ip {
   min-width: 118px;
   font-family: 'Azeret Mono', ui-monospace, monospace;

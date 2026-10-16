@@ -9,6 +9,7 @@ const { criarLimitador } = require('./limite');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATUS   = ['pending', 'approved', 'blocked'];
+const TIPOS_ACESSO = ['visita', 'login'];
 
 function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
   const router  = express.Router();
@@ -20,12 +21,12 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     return res.status(503).json({ error: mw.MSG.indisponivel });
   }
 
-  // Registro para a aba IPs do admin. Não pode derrubar o login: falha vira só log.
+  // Registro para a aba Acessos do admin. Não pode derrubar o login: falha vira só log.
   async function registrarLogin(req, perfil) {
     try {
-      await repositorio.registrarLogin({
-        userId: perfil.id, email: perfil.email,
-        ip: req.ip || null, userAgent: req.get('user-agent') || null,
+      await repositorio.registrarAcesso({
+        tipo: 'login', userId: perfil.id, email: perfil.email,
+        ip: req.ip || null, userAgent: req.get('user-agent') || null, caminho: req.path,
       });
     } catch (e) { console.error('[auth] registro de login falhou:', descrever(e)); }
   }
@@ -89,16 +90,18 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     } catch (e) { responderErro(res, e); }
   });
 
-  // Últimos logins (aba IPs). ?limite= até 500; padrão 200.
-  router.get('/admin/logins', mw.exigirAdminApi, async (req, res) => {
+  // Últimos acessos (aba Acessos). ?tipo=visita|login; ?limite= até 500, padrão 200.
+  router.get('/admin/acessos', mw.exigirAdminApi, async (req, res) => {
+    const tipo = req.query.tipo;
+    if (tipo !== undefined && !TIPOS_ACESSO.includes(tipo)) return res.status(400).json({ error: 'Tipo inválido.' });
     const pedido = Number.parseInt(req.query.limite, 10);
     const limite = Number.isInteger(pedido) && pedido > 0 ? Math.min(pedido, 500) : 200;
     try {
-      const logins = await repositorio.listarLogins(limite);
+      const acessos = await repositorio.listarAcessos(limite, tipo);
       res.json({
-        logins: logins.map(l => ({
-          id: l.id, user_id: l.user_id, email: l.email, ip: l.ip,
-          user_agent: l.user_agent, created_at: l.created_at,
+        acessos: acessos.map(a => ({
+          id: a.id, tipo: a.tipo, user_id: a.user_id, email: a.email, ip: a.ip,
+          user_agent: a.user_agent, caminho: a.caminho, created_at: a.created_at,
         })),
       });
     } catch (e) { responderErro(res, e); }

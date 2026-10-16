@@ -6,9 +6,9 @@ const { criarSessao }      = require('./sessao');
 const { criarMiddlewares } = require('./middleware');
 const { criarRotas }       = require('./rotas');
 
-function montarAuth(app, { repositorio, adminEmail, segredoSessao, limiteTentativas }) {
+function montarAuth(app, { repositorio, adminEmail, segredoSessao, limiteTentativas, janelaVisitaMs }) {
   const sessao = criarSessao(segredoSessao);
-  const mw     = criarMiddlewares({ sessao, repositorio, adminEmail });
+  const mw     = criarMiddlewares({ sessao, repositorio, adminEmail, janelaVisitaMs });
 
   app.use(mw.carregarSessao);
   app.use(criarRotas({ sessao, repositorio, mw, limiteTentativas }));

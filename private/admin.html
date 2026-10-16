@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Azeret+Mono:wght@400..700&family=Saira+Condensed:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/style.css?v=5" />
-  <link rel="stylesheet" href="/auth.css?v=1" />
+  <link rel="stylesheet" href="/auth.css?v=3" />
   <script>
     (function () {
       var t;
@@ -41,7 +41,13 @@
       <button type="button" class="aba is-active" role="tab" data-status="pending">Pendentes</button>
       <button type="button" class="aba" role="tab" data-status="approved">Aprovados</button>
       <button type="button" class="aba" role="tab" data-status="blocked">Bloqueados</button>
-      <button type="button" class="aba" role="tab" data-status="ips">IPs</button>
+      <button type="button" class="aba" role="tab" data-status="acessos">Acessos</button>
+    </div>
+
+    <div id="filtroAcessos" class="filtro hidden" role="group" aria-label="Filtrar acessos">
+      <button type="button" class="filtro-btn is-active" data-tipo="">Todos</button>
+      <button type="button" class="filtro-btn" data-tipo="visita">Visitas</button>
+      <button type="button" class="filtro-btn" data-tipo="login">Logins</button>
     </div>
 
     <div id="usuarios" class="usuarios"></div>
@@ -50,6 +56,6 @@
 
   <script src="/theme.js"></script>
   <script src="/auth.js?v=1"></script>
-  <script src="/admin.js?v=1"></script>
+  <script src="/admin.js?v=3"></script>
 </body>
 </html>

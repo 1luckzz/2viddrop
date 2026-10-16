@@ -42,11 +42,12 @@ const PRIVATE_DIR = path.join(__dirname, 'private');
 // ── PÁGINAS ──────────────────────────────────────────────────
 // A raiz passa a redirecionar; o health check do Render usa /healthz.
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
-app.get(['/', '/index.html'],      auth.exigirAprovadoPagina, (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'index.html')));
-app.get(['/admin', '/admin.html'], auth.exigirAdminPagina,    (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'admin.html')));
-app.get('/login',      auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'login.html')));
-app.get('/cadastro',   auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'cadastro.html')));
-app.get('/aguardando', auth.exigirAguardando,   (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'aguardando.html')));
+// registrarVisita grava quem abriu a página (aba Acessos), logado ou não.
+app.get(['/', '/index.html'],      auth.registrarVisita, auth.exigirAprovadoPagina, (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'index.html')));
+app.get(['/admin', '/admin.html'], auth.registrarVisita, auth.exigirAdminPagina,    (req, res) => res.sendFile(path.join(PRIVATE_DIR, 'admin.html')));
+app.get('/login',      auth.registrarVisita, auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'login.html')));
+app.get('/cadastro',   auth.registrarVisita, auth.redirecionarLogado, (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'cadastro.html')));
+app.get('/aguardando', auth.registrarVisita, auth.exigirAguardando,   (req, res) => res.sendFile(path.join(PUBLIC_DIR, 'aguardando.html')));
 
 // Teto de segurança: um m3u8 de transmissão ao vivo (ou que nunca fecha) faz o
 // downloader escrever pra sempre e encher o disco do servidor. Nada no caminho

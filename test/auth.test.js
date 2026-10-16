@@ -28,12 +28,12 @@ function subir(extras = {}) {
     ...extras,
   });
 
-  app.get('/pagina',     mw.exigirAprovadoPagina, (req, res) => res.send('pagina'));
+  app.get('/pagina',     mw.registrarVisita, mw.exigirAprovadoPagina, (req, res) => res.send('pagina'));
   app.post('/protegida', mw.exigirAprovadoApi,    (req, res) => res.json({ ok: true, email: req.usuario.email }));
   app.get('/painel',     mw.exigirAdminPagina,    (req, res) => res.send('painel'));
   app.get('/so-admin',   mw.exigirAdminApi,       (req, res) => res.json({ ok: true }));
-  app.get('/entrar',     mw.redirecionarLogado,   (req, res) => res.send('entrar'));
-  app.get('/espera',     mw.exigirAguardando,     (req, res) => res.send('espera'));
+  app.get('/entrar',     mw.registrarVisita, mw.redirecionarLogado, (req, res) => res.send('entrar'));
+  app.get('/espera',     mw.registrarVisita, mw.exigirAguardando,   (req, res) => res.send('espera'));
 
   const server = http.createServer(app);
   return new Promise(resolve => server.listen(0, '127.0.0.1', () =>
@@ -429,8 +429,8 @@ describe('limite de tentativas de login e cadastro por IP', () => {
   });
 });
 
-// ── registro de logins (aba IPs) ──────────────────────────────
-describe('registro de IPs de login', () => {
+// ── registro de acessos (aba Acessos) ────────────────────────
+describe('registro de acessos: visitas e logins', () => {
   async function entrarComoAdmin() {
     const c = cliente(ctx.porta);
     const r = await c.pedir('POST', '/auth/login', { email: 'dono@meekz.com', senha: SENHA });
@@ -438,54 +438,101 @@ describe('registro de IPs de login', () => {
     return c;
   }
 
-  test('cadastro e login gravam IP, e-mail e navegador; a lista vem do mais novo para o mais antigo', async () => {
-    const antes = (await ctx.repo.listarLogins(500)).length;
-    const c = cliente(ctx.porta);
-    await c.pedir('POST', '/auth/cadastro', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/1.0' } });
-    await c.pedir('POST', '/auth/sair');
-    await c.pedir('POST', '/auth/login', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/2.0' } });
-    const logins = await ctx.repo.listarLogins(500);
-    assert.strictEqual(logins.length, antes + 2, 'um registro por cadastro e um por login');
-    assert.strictEqual(logins[0].email, 'ip-a@exemplo.com');
-    assert.strictEqual(logins[0].user_agent, 'NavegadorTeste/2.0', 'o mais novo primeiro');
-    assert.strictEqual(logins[1].user_agent, 'NavegadorTeste/1.0');
-    assert.ok(logins[0].ip, 'ip preenchido');
-    assert.ok(logins[0].user_id && logins[0].created_at);
+  test('abrir uma página anônimo grava visita com IP, caminho e navegador, sem e-mail', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });   // servidor limpo: nenhuma visita anterior deste IP
+    try {
+      const r = await cliente(proprio.porta).pedir('GET', '/entrar', undefined, { headers: { 'User-Agent': 'Visitante/1.0' } });
+      assert.strictEqual(r.status, 200, 'a página continua respondendo normalmente');
+      const acessos = await proprio.repo.listarAcessos(500);
+      assert.strictEqual(acessos.length, 1);
+      const [ultimo] = acessos;
+      assert.strictEqual(ultimo.tipo, 'visita');
+      assert.strictEqual(ultimo.caminho, '/entrar');
+      assert.strictEqual(ultimo.user_agent, 'Visitante/1.0');
+      assert.ok(ultimo.ip, 'ip preenchido');
+      assert.strictEqual(ultimo.email, null);
+      assert.strictEqual(ultimo.user_id, null);
+    } finally { proprio.server.close(); }
+  });
+
+  test('o mesmo IP não gera outra visita dentro da janela, mesmo em outra página', async () => {
+    const proprio = await subir();   // janela padrão de 5 minutos
+    try {
+      const c = cliente(proprio.porta);
+      await c.pedir('GET', '/entrar');
+      await c.pedir('GET', '/pagina');
+      await c.pedir('GET', '/espera');
+      const acessos = await proprio.repo.listarAcessos(500);
+      assert.strictEqual(acessos.length, 1, 'só a primeira abertura conta dentro da janela');
+      assert.strictEqual(acessos[0].caminho, '/entrar');
+    } finally { proprio.server.close(); }
+  });
+
+  test('visita de quem está logado leva o e-mail', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });
+    try {
+      const c = cliente(proprio.porta);
+      await c.pedir('POST', '/auth/cadastro', { email: 'visita-logada@exemplo.com', senha: SENHA });
+      await c.pedir('GET', '/pagina');
+      const [ultimo] = await proprio.repo.listarAcessos(500);
+      assert.strictEqual(ultimo.tipo, 'visita');
+      assert.strictEqual(ultimo.caminho, '/pagina');
+      assert.strictEqual(ultimo.email, 'visita-logada@exemplo.com');
+    } finally { proprio.server.close(); }
+  });
+
+  test('cadastro e login gravam acesso do tipo login, com e-mail e navegador', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });
+    try {
+      const c = cliente(proprio.porta);
+      await c.pedir('POST', '/auth/cadastro', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/1.0' } });
+      await c.pedir('POST', '/auth/sair');
+      await c.pedir('POST', '/auth/login', { email: 'ip-a@exemplo.com', senha: SENHA }, { headers: { 'User-Agent': 'NavegadorTeste/2.0' } });
+      const logins = await proprio.repo.listarAcessos(500, 'login');
+      assert.strictEqual(logins.length, 2, 'um por cadastro e um por login');
+      assert.strictEqual(logins[0].email, 'ip-a@exemplo.com');
+      assert.strictEqual(logins[0].user_agent, 'NavegadorTeste/2.0', 'o mais novo primeiro');
+      assert.strictEqual(logins[1].user_agent, 'NavegadorTeste/1.0');
+      assert.ok(logins[0].ip && logins[0].user_id && logins[0].created_at);
+    } finally { proprio.server.close(); }
   });
 
   test('senha errada não gera registro', async () => {
-    const antes = (await ctx.repo.listarLogins(500)).length;
-    await cliente(ctx.porta).pedir('POST', '/auth/login', { email: 'ip-a@exemplo.com', senha: 'errada-12345' });
-    assert.strictEqual((await ctx.repo.listarLogins(500)).length, antes);
+    const antes = (await ctx.repo.listarAcessos(500, 'login')).length;
+    await cliente(ctx.porta).pedir('POST', '/auth/login', { email: 'ninguem@exemplo.com', senha: 'errada-12345' });
+    assert.strictEqual((await ctx.repo.listarAcessos(500, 'login')).length, antes);
   });
 
-  test('GET /admin/logins devolve os últimos logins só para o admin', async () => {
+  test('GET /admin/acessos lista os dois tipos, filtra por tipo e respeita o limite; só admin', async () => {
     const admin = await entrarComoAdmin();
-    const r = await admin.pedir('GET', '/admin/logins');
+    const r = await admin.pedir('GET', '/admin/acessos');
     assert.strictEqual(r.status, 200);
-    assert.ok(Array.isArray(r.json.logins) && r.json.logins.length > 0);
-    assert.deepStrictEqual(Object.keys(r.json.logins[0]).sort(), ['created_at', 'email', 'id', 'ip', 'user_agent', 'user_id']);
-    assert.strictEqual(r.json.logins[0].email, 'dono@meekz.com', 'o login do admin agora é o mais recente');
+    assert.ok(Array.isArray(r.json.acessos) && r.json.acessos.length > 0);
+    assert.deepStrictEqual(Object.keys(r.json.acessos[0]).sort(),
+      ['caminho', 'created_at', 'email', 'id', 'ip', 'tipo', 'user_agent', 'user_id']);
+    assert.strictEqual(r.json.acessos[0].tipo, 'login', 'o login do admin é o mais recente');
+    assert.ok(r.json.acessos.some(a => a.tipo === 'visita'));
+
+    const visitas = await admin.pedir('GET', '/admin/acessos?tipo=visita');
+    assert.ok(visitas.json.acessos.length > 0 && visitas.json.acessos.every(a => a.tipo === 'visita'));
+    const invalido = await admin.pedir('GET', '/admin/acessos?tipo=xpto');
+    assert.strictEqual(invalido.status, 400);
+    assert.strictEqual((await admin.pedir('GET', '/admin/acessos?limite=2')).json.acessos.length, 2);
 
     const comum = cliente(ctx.porta);
     await cadastrar(comum, 'ip-comum@exemplo.com');
-    assert.strictEqual((await comum.pedir('GET', '/admin/logins')).status, 403);
-    assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/logins')).status, 401);
+    assert.strictEqual((await comum.pedir('GET', '/admin/acessos')).status, 403);
+    assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/acessos')).status, 401);
   });
 
-  test('a listagem respeita o limite', async () => {
-    const admin = await entrarComoAdmin();
-    const r = await admin.pedir('GET', '/admin/logins?limite=2');
-    assert.strictEqual(r.json.logins.length, 2);
-  });
-
-  test('falha ao gravar o registro não impede o login', async () => {
-    const c = cliente(ctx.porta);
-    await cadastrar(c, 'ip-falha@exemplo.com');
-    ctx.repo.falharRegistro = true;
+  test('falha ao gravar o registro não impede o login nem a página', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });
     try {
-      const r = await c.pedir('POST', '/auth/login', { email: 'ip-falha@exemplo.com', senha: SENHA });
-      assert.strictEqual(r.status, 200);
-    } finally { ctx.repo.falharRegistro = false; }
+      const c = cliente(proprio.porta);
+      await cadastrar(c, 'ip-falha@exemplo.com');
+      proprio.repo.falharRegistro = true;
+      assert.strictEqual((await c.pedir('POST', '/auth/login', { email: 'ip-falha@exemplo.com', senha: SENHA })).status, 200);
+      assert.strictEqual((await c.pedir('GET', '/entrar')).status, 302);
+    } finally { proprio.server.close(); }
   });
 });

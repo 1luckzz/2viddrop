@@ -8,7 +8,7 @@ const { ErroEmailExistente, ErroIndisponivel } = require('../../auth/erros');
 function criarRepositorioMemoria() {
   const contas  = new Map();   // email -> { id, senha }
   const perfis  = new Map();   // id -> perfil
-  const logins  = [];          // registros de login, em ordem de chegada
+  const acessos = [];          // visitas e logins, em ordem de chegada
   let relogio = 0;             // created_at crescente e determinístico
 
   const repo = {
@@ -60,18 +60,19 @@ function criarRepositorioMemoria() {
       return perfil;
     },
 
-    async registrarLogin({ userId, email, ip, userAgent }) {
+    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho }) {
       checar();
       if (repo.falharRegistro) throw new ErroIndisponivel(new Error('registro simulado'));
-      logins.push({
-        id: logins.length + 1, user_id: userId, email, ip: ip || null, user_agent: userAgent || null,
+      acessos.push({
+        id: acessos.length + 1, tipo, user_id: userId || null, email: email || null,
+        ip: ip || null, user_agent: userAgent || null, caminho: caminho || null,
         created_at: new Date(1_700_000_000_000 + (relogio++) * 1000).toISOString(),
       });
     },
 
-    async listarLogins(limite) {
+    async listarAcessos(limite, tipo) {
       checar();
-      return logins.slice().reverse().slice(0, limite);
+      return acessos.filter(a => !tipo || a.tipo === tipo).slice().reverse().slice(0, limite);
     },
 
     // só para os testes: simula usuário apagado no Supabase

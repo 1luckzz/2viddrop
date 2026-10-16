@@ -1,5 +1,5 @@
 // Painel /admin: lista os usuários por status e aprova, bloqueia ou devolve a pendente.
-// A aba IPs mostra os últimos logins (IP, conta, navegador, data).
+// A aba Acessos mostra quem abriu o site (visitas, logado ou não) e os logins.
 // DOM manual, no mesmo estilo de twitter.js.
 (function () {
   const $ = id => document.getElementById(id);
@@ -7,7 +7,8 @@
   const erro  = $('erro');
   if (!lista) return;
 
-  const ROTULO = { pending: 'Pendentes', approved: 'Aprovados', blocked: 'Bloqueados', ips: 'IPs' };
+  const ROTULO = { pending: 'Pendentes', approved: 'Aprovados', blocked: 'Bloqueados', acessos: 'Acessos' };
+  const filtro = $('filtroAcessos');
   // botões por status atual: [status novo, rótulo]
   const ACOES = {
     pending:  [['approved', 'Aprovar'],  ['blocked', 'Bloquear']],
@@ -16,7 +17,8 @@
   };
 
   let usuarios = [];
-  let logins = null;   // carregado só quando a aba IPs abre
+  let acessos = null;     // carregado só quando a aba Acessos abre
+  let tipoFiltro = '';    // '', 'visita' ou 'login'
   let aba = 'pending';
 
   function mostrarErro(msg) { erro.textContent = msg; erro.classList.remove('hidden'); }
@@ -32,13 +34,13 @@
     desenhar();
   }
 
-  async function carregarLogins() {
+  async function carregarAcessos() {
     let res;
-    try { res = await fetch('/admin/logins'); }
+    try { res = await fetch('/admin/acessos' + (tipoFiltro ? '?tipo=' + tipoFiltro : '')); }
     catch { return mostrarErro('Sem conexão com o servidor.'); }
     if (redirecionarSeSemAcesso(res)) return;
-    if (!res.ok) return mostrarErro('Não foi possível carregar os logins.');
-    logins = (await res.json()).logins;
+    if (!res.ok) return mostrarErro('Não foi possível carregar os acessos.');
+    acessos = (await res.json()).acessos;
     erro.classList.add('hidden');
     desenhar();
   }
@@ -54,47 +56,52 @@
     return so ? `${nav} · ${so}` : nav;
   }
 
-  function linhaLogin(l) {
+  function linhaAcesso(a) {
     const row = document.createElement('div');
     row.className = 'usuario';
+    const tipo = document.createElement('span');
+    tipo.className = 'acesso-tipo' + (a.tipo === 'login' ? ' is-login' : '');
+    tipo.textContent = a.tipo === 'login' ? 'login' : 'visita';
     const ip = document.createElement('span');
     ip.className = 'login-ip';
-    ip.textContent = l.ip || '—';
-    const email = document.createElement('span');
-    email.className = 'usuario-email';
-    email.textContent = l.email;
-    email.title = l.email;
+    ip.textContent = a.ip || '—';
+    const quem = document.createElement('span');
+    quem.className = 'usuario-email';
+    // visita anônima mostra a página aberta; logado mostra a conta
+    quem.textContent = a.email ? a.email + (a.tipo === 'visita' && a.caminho ? ' · ' + a.caminho : '') : (a.caminho || '—');
+    quem.title = [a.email, a.caminho].filter(Boolean).join(' · ');
     const nav = document.createElement('span');
     nav.className = 'usuario-data';
-    nav.textContent = resumirNavegador(l.user_agent);
-    nav.title = l.user_agent || '';
+    nav.textContent = resumirNavegador(a.user_agent);
+    nav.title = a.user_agent || '';
     const quando = document.createElement('span');
     quando.className = 'usuario-data';
-    quando.textContent = new Date(l.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-    row.append(ip, email, nav, quando);
+    quando.textContent = new Date(a.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    row.append(tipo, ip, quem, nav, quando);
     return row;
   }
 
   function desenhar() {
     document.querySelectorAll('.aba').forEach(b => {
       const s = b.dataset.status;
-      const n = s === 'ips' ? (logins ? logins.length : null) : usuarios.filter(u => u.status === s).length;
+      const n = s === 'acessos' ? (acessos ? acessos.length : null) : usuarios.filter(u => u.status === s).length;
       b.textContent = n === null ? ROTULO[s] : `${ROTULO[s]} (${n})`;
       b.classList.toggle('is-active', s === aba);
       b.setAttribute('aria-selected', String(s === aba));
     });
 
     lista.innerHTML = '';
-    if (aba === 'ips') {
-      if (!logins) return;
-      if (!logins.length) {
+    filtro.classList.toggle('hidden', aba !== 'acessos');
+    if (aba === 'acessos') {
+      if (!acessos) return;
+      if (!acessos.length) {
         const p = document.createElement('p');
         p.className = 'usuarios-vazio';
-        p.textContent = 'Nenhum login registrado ainda.';
+        p.textContent = 'Nenhum acesso registrado ainda.';
         lista.appendChild(p);
         return;
       }
-      logins.forEach(l => lista.appendChild(linhaLogin(l)));
+      acessos.forEach(a => lista.appendChild(linhaAcesso(a)));
       return;
     }
     const visiveis = usuarios.filter(u => u.status === aba);
@@ -170,7 +177,13 @@
   document.querySelectorAll('.aba').forEach(b => b.addEventListener('click', () => {
     aba = b.dataset.status;
     desenhar();
-    if (aba === 'ips') carregarLogins();
+    if (aba === 'acessos') carregarAcessos();
+  }));
+
+  filtro.querySelectorAll('.filtro-btn').forEach(b => b.addEventListener('click', () => {
+    tipoFiltro = b.dataset.tipo;
+    filtro.querySelectorAll('.filtro-btn').forEach(x => x.classList.toggle('is-active', x === b));
+    carregarAcessos();
   }));
 
   carregar();

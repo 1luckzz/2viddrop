@@ -5,7 +5,7 @@
 const { ErroEmailExistente, ErroIndisponivel } = require('./erros');
 
 const TABELA  = 'viddrop_profiles';
-const LOGINS  = 'viddrop_logins';
+const ACESSOS = 'viddrop_acessos';
 const COLUNAS = 'id, email, status, created_at, reviewed_at';
 
 function criarRepositorioSupabase({ admin, loginComSenha }) {
@@ -46,16 +46,19 @@ function criarRepositorioSupabase({ admin, loginComSenha }) {
       return data;
     },
 
-    async registrarLogin({ userId, email, ip, userAgent }) {
-      const { error } = await admin.from(LOGINS).insert({ user_id: userId, email, ip, user_agent: userAgent });
+    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho }) {
+      const { error } = await admin.from(ACESSOS)
+        .insert({ tipo, user_id: userId || null, email: email || null, ip, user_agent: userAgent, caminho: caminho || null });
       if (error) throw falha(error);
     },
 
-    async listarLogins(limite) {
-      const { data, error } = await admin.from(LOGINS)
-        .select('id, user_id, email, ip, user_agent, created_at')
+    async listarAcessos(limite, tipo) {
+      let consulta = admin.from(ACESSOS)
+        .select('id, tipo, user_id, email, ip, user_agent, caminho, created_at')
         .order('created_at', { ascending: false }).order('id', { ascending: false })
         .limit(limite);
+      if (tipo) consulta = consulta.eq('tipo', tipo);
+      const { data, error } = await consulta;
       if (error) throw falha(error);
       return data;
     },

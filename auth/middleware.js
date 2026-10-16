@@ -21,7 +21,9 @@ function normalizar(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
-function criarMiddlewares({ sessao, repositorio, adminEmail }) {
+const JANELA_VISITA_MS = 5 * 60 * 1000;
+
+function criarMiddlewares({ sessao, repositorio, adminEmail, janelaVisitaMs = JANELA_VISITA_MS }) {
   const admin = normalizar(adminEmail);
   if (!admin) throw new Error('ADMIN_EMAIL vazio');
 
@@ -95,8 +97,31 @@ function criarMiddlewares({ sessao, repositorio, adminEmail }) {
     next();
   }
 
+  // Aba Acessos: grava quem abriu uma página, logado ou não. Uma visita por IP
+  // por janela, pra recarregar a página não encher a lista. Roda em segundo
+  // plano e nunca segura nem derruba a resposta.
+  const visitasRecentes = new Map();   // ip -> timestamp da última visita gravada
+  function registrarVisita(req, res, next) {
+    next();
+    const ip = req.ip || (req.socket && req.socket.remoteAddress) || null;
+    const agora = Date.now();
+    const ultima = ip ? visitasRecentes.get(ip) : undefined;
+    if (ip && ultima !== undefined && agora - ultima < janelaVisitaMs) return;
+    if (ip) visitasRecentes.set(ip, agora);
+    if (visitasRecentes.size > 5000) visitasRecentes.clear();   // teto de memória
+
+    Promise.resolve(repositorio.registrarAcesso({
+      tipo: 'visita',
+      userId: req.sessao ? req.sessao.id : null,
+      email: req.sessao ? req.sessao.email : null,
+      ip,
+      userAgent: req.get('user-agent') || null,
+      caminho: req.path,
+    })).catch(e => console.error('[auth] registro de visita falhou:', descrever(e)));
+  }
+
   return {
-    MSG, ehAdmin, carregarSessao, carregarUsuario,
+    MSG, ehAdmin, carregarSessao, carregarUsuario, registrarVisita,
     exigirAprovadoPagina: guarda({ api: false, admin: false }),
     exigirAprovadoApi:    guarda({ api: true,  admin: false }),
     exigirAdminPagina:    guarda({ api: false, admin: true }),
