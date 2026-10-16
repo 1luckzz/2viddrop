@@ -98,7 +98,9 @@ O site inteiro fica atrás de login. Fluxo:
    e entra. **Bloquear** tira o acesso na hora.
 4. A aba **Acessos** lista quem abriu o site: visitas (uma por IP a cada 5 minutos, com
    a página aberta e, se logado, a conta) e logins. Tudo fica na tabela `viddrop_acessos`,
-   com IP, navegador e data.
+   com IP, localização aproximada, navegador e data. O IP real vem do cabeçalho
+   `CF-Connecting-IP` da Cloudflare; a localização vem do serviço gratuito ip-api.com
+   (o IP do visitante é enviado a ele), com cache em memória por IP.
 
 As contas ficam no Supabase Auth e o status na tabela `viddrop_profiles`
 (migração `viddrop_profiles`, projeto `spm-homolog`). Só o servidor acessa a tabela,

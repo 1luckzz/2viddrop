@@ -6,6 +6,7 @@ const express = require('express');
 const { ErroEmailExistente } = require('./erros');
 const { normalizar, descrever } = require('./middleware');
 const { criarLimitador } = require('./limite');
+const { ipDoPedido } = require('./ip');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const STATUS   = ['pending', 'approved', 'blocked'];
@@ -21,19 +22,13 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     return res.status(503).json({ error: mw.MSG.indisponivel });
   }
 
-  // Registro para a aba Acessos do admin. Não pode derrubar o login: falha vira só log.
-  async function registrarLogin(req, perfil) {
-    try {
-      await repositorio.registrarAcesso({
-        tipo: 'login', userId: perfil.id, email: perfil.email,
-        ip: req.ip || null, userAgent: req.get('user-agent') || null, caminho: req.path,
-      });
-    } catch (e) { console.error('[auth] registro de login falhou:', descrever(e)); }
-  }
-
-  async function entrar(req, res, perfil) {
+  function entrar(req, res, perfil) {
     sessao.gravarCookie(req, res, sessao.assinar({ id: perfil.id, email: perfil.email }));
-    await registrarLogin(req, perfil);
+    // registro para a aba Acessos; roda em segundo plano, não segura a resposta
+    mw.gravarAcesso({
+      tipo: 'login', userId: perfil.id, email: perfil.email,
+      ip: ipDoPedido(req), userAgent: req.get('user-agent') || null, caminho: req.path,
+    });
     return { status: perfil.status, aprovado: mw.ehAdmin(perfil.email) || perfil.status === 'approved' };
   }
 
@@ -46,7 +41,7 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
     }
     try {
       const perfil = await repositorio.criarUsuario(email, senha);
-      res.status(201).json(await entrar(req, res, perfil));
+      res.status(201).json(entrar(req, res, perfil));
     } catch (e) { responderErro(res, e); }
   });
 
@@ -59,7 +54,7 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
       if (!usuario) return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
       const perfil = (await repositorio.buscarPerfil(usuario.id))
                   || (await repositorio.garantirPerfil(usuario.id, usuario.email));
-      res.json(await entrar(req, res, perfil));
+      res.json(entrar(req, res, perfil));
     } catch (e) { responderErro(res, e); }
   });
 
@@ -101,7 +96,7 @@ function criarRotas({ sessao, repositorio, mw, limiteTentativas }) {
       res.json({
         acessos: acessos.map(a => ({
           id: a.id, tipo: a.tipo, user_id: a.user_id, email: a.email, ip: a.ip,
-          user_agent: a.user_agent, caminho: a.caminho, created_at: a.created_at,
+          localizacao: a.localizacao, user_agent: a.user_agent, caminho: a.caminho, created_at: a.created_at,
         })),
       });
     } catch (e) { responderErro(res, e); }

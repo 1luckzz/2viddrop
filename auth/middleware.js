@@ -21,9 +21,12 @@ function normalizar(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : '';
 }
 
+const { ipDoPedido } = require('./ip');
+const { ehIpLocal } = require('./geo');
+
 const JANELA_VISITA_MS = 5 * 60 * 1000;
 
-function criarMiddlewares({ sessao, repositorio, adminEmail, janelaVisitaMs = JANELA_VISITA_MS }) {
+function criarMiddlewares({ sessao, repositorio, adminEmail, geolocalizador, janelaVisitaMs = JANELA_VISITA_MS }) {
   const admin = normalizar(adminEmail);
   if (!admin) throw new Error('ADMIN_EMAIL vazio');
 
@@ -97,31 +100,42 @@ function criarMiddlewares({ sessao, repositorio, adminEmail, janelaVisitaMs = JA
     next();
   }
 
+  // Grava um acesso (visita ou login) em segundo plano, com a localização do IP.
+  // Nunca segura nem derruba a resposta: falha vira só log.
+  function gravarAcesso(dados) {
+    const localizar = geolocalizador ? geolocalizador.localizar(dados.ip) : Promise.resolve(null);
+    Promise.resolve(localizar)
+      .catch(() => null)
+      .then(localizacao => repositorio.registrarAcesso({ ...dados, localizacao }))
+      .catch(e => console.error(`[auth] registro de ${dados.tipo} falhou:`, descrever(e)));
+  }
+
   // Aba Acessos: grava quem abriu uma página, logado ou não. Uma visita por IP
-  // por janela, pra recarregar a página não encher a lista. Roda em segundo
-  // plano e nunca segura nem derruba a resposta.
+  // por janela, pra recarregar a página não encher a lista. IPs locais são
+  // checagens internas (health check), não visitantes.
   const visitasRecentes = new Map();   // ip -> timestamp da última visita gravada
   function registrarVisita(req, res, next) {
     next();
-    const ip = req.ip || (req.socket && req.socket.remoteAddress) || null;
+    const ip = ipDoPedido(req);
+    if (!ip || ehIpLocal(ip)) return;
     const agora = Date.now();
-    const ultima = ip ? visitasRecentes.get(ip) : undefined;
-    if (ip && ultima !== undefined && agora - ultima < janelaVisitaMs) return;
-    if (ip) visitasRecentes.set(ip, agora);
+    const ultima = visitasRecentes.get(ip);
+    if (ultima !== undefined && agora - ultima < janelaVisitaMs) return;
+    visitasRecentes.set(ip, agora);
     if (visitasRecentes.size > 5000) visitasRecentes.clear();   // teto de memória
 
-    Promise.resolve(repositorio.registrarAcesso({
+    gravarAcesso({
       tipo: 'visita',
       userId: req.sessao ? req.sessao.id : null,
       email: req.sessao ? req.sessao.email : null,
       ip,
       userAgent: req.get('user-agent') || null,
       caminho: req.path,
-    })).catch(e => console.error('[auth] registro de visita falhou:', descrever(e)));
+    });
   }
 
   return {
-    MSG, ehAdmin, carregarSessao, carregarUsuario, registrarVisita,
+    MSG, ehAdmin, carregarSessao, carregarUsuario, registrarVisita, gravarAcesso,
     exigirAprovadoPagina: guarda({ api: false, admin: false }),
     exigirAprovadoApi:    guarda({ api: true,  admin: false }),
     exigirAdminPagina:    guarda({ api: false, admin: true }),

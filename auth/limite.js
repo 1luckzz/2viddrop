@@ -5,11 +5,13 @@
 // como quem fala com o Supabase é o servidor, o limite do Supabase veria só o
 // IP do Render e valeria pro site inteiro, não por atacante.
 
+const { ipDoPedido } = require('./ip');
+
 function criarLimitador({ max = 10, janelaMs = 15 * 60 * 1000 } = {}) {
   const acessos = new Map();   // ip -> number[] (timestamps)
 
   return function limitar(req, res, next) {
-    const ip    = req.ip || (req.socket && req.socket.remoteAddress) || 'desconhecido';
+    const ip    = ipDoPedido(req) || 'desconhecido';
     const agora = Date.now();
     const lista = (acessos.get(ip) || []).filter(t => agora - t < janelaMs);
 

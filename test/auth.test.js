@@ -22,9 +22,12 @@ function subir(extras = {}) {
   const repo = criarRepositorioMemoria();
   app.use(express.json());
   // a suíte faz dezenas de logins do mesmo IP: o limite só aperta no teste que o exercita
+  // geolocalizador falso: "Cidade de <ip>" para qualquer IP público
+  const geolocalizador = { localizar: async ip => (ip ? `Cidade de ${ip}` : null) };
   const mw = montarAuth(app, {
     repositorio: repo, adminEmail: ADMIN, segredoSessao: SEGREDO,
     limiteTentativas: { max: 10_000, janelaMs: 60_000 },
+    geolocalizador,
     ...extras,
   });
 
@@ -441,7 +444,7 @@ describe('registro de acessos: visitas e logins', () => {
   test('abrir uma página anônimo grava visita com IP, caminho e navegador, sem e-mail', async () => {
     const proprio = await subir({ janelaVisitaMs: 0 });   // servidor limpo: nenhuma visita anterior deste IP
     try {
-      const r = await cliente(proprio.porta).pedir('GET', '/entrar', undefined, { headers: { 'User-Agent': 'Visitante/1.0' } });
+      const r = await cliente(proprio.porta).pedir('GET', '/entrar', undefined, { headers: { 'User-Agent': 'Visitante/1.0', 'CF-Connecting-IP': '6.6.6.6' } });
       assert.strictEqual(r.status, 200, 'a página continua respondendo normalmente');
       const acessos = await proprio.repo.listarAcessos(500);
       assert.strictEqual(acessos.length, 1);
@@ -449,7 +452,7 @@ describe('registro de acessos: visitas e logins', () => {
       assert.strictEqual(ultimo.tipo, 'visita');
       assert.strictEqual(ultimo.caminho, '/entrar');
       assert.strictEqual(ultimo.user_agent, 'Visitante/1.0');
-      assert.ok(ultimo.ip, 'ip preenchido');
+      assert.strictEqual(ultimo.ip, '6.6.6.6');
       assert.strictEqual(ultimo.email, null);
       assert.strictEqual(ultimo.user_id, null);
     } finally { proprio.server.close(); }
@@ -459,9 +462,10 @@ describe('registro de acessos: visitas e logins', () => {
     const proprio = await subir();   // janela padrão de 5 minutos
     try {
       const c = cliente(proprio.porta);
-      await c.pedir('GET', '/entrar');
-      await c.pedir('GET', '/pagina');
-      await c.pedir('GET', '/espera');
+      const cf = { headers: { 'CF-Connecting-IP': '5.5.5.5' } };
+      await c.pedir('GET', '/entrar', undefined, cf);
+      await c.pedir('GET', '/pagina', undefined, cf);
+      await c.pedir('GET', '/espera', undefined, cf);
       const acessos = await proprio.repo.listarAcessos(500);
       assert.strictEqual(acessos.length, 1, 'só a primeira abertura conta dentro da janela');
       assert.strictEqual(acessos[0].caminho, '/entrar');
@@ -473,7 +477,7 @@ describe('registro de acessos: visitas e logins', () => {
     try {
       const c = cliente(proprio.porta);
       await c.pedir('POST', '/auth/cadastro', { email: 'visita-logada@exemplo.com', senha: SENHA });
-      await c.pedir('GET', '/pagina');
+      await c.pedir('GET', '/pagina', undefined, { headers: { 'CF-Connecting-IP': '7.7.7.7' } });
       const [ultimo] = await proprio.repo.listarAcessos(500);
       assert.strictEqual(ultimo.tipo, 'visita');
       assert.strictEqual(ultimo.caminho, '/pagina');
@@ -504,12 +508,13 @@ describe('registro de acessos: visitas e logins', () => {
   });
 
   test('GET /admin/acessos lista os dois tipos, filtra por tipo e respeita o limite; só admin', async () => {
+    await cliente(ctx.porta).pedir('GET', '/entrar', undefined, { headers: { 'CF-Connecting-IP': '8.8.8.8' } });
     const admin = await entrarComoAdmin();
     const r = await admin.pedir('GET', '/admin/acessos');
     assert.strictEqual(r.status, 200);
     assert.ok(Array.isArray(r.json.acessos) && r.json.acessos.length > 0);
     assert.deepStrictEqual(Object.keys(r.json.acessos[0]).sort(),
-      ['caminho', 'created_at', 'email', 'id', 'ip', 'tipo', 'user_agent', 'user_id']);
+      ['caminho', 'created_at', 'email', 'id', 'ip', 'localizacao', 'tipo', 'user_agent', 'user_id']);
     assert.strictEqual(r.json.acessos[0].tipo, 'login', 'o login do admin é o mais recente');
     assert.ok(r.json.acessos.some(a => a.tipo === 'visita'));
 
@@ -523,6 +528,49 @@ describe('registro de acessos: visitas e logins', () => {
     await cadastrar(comum, 'ip-comum@exemplo.com');
     assert.strictEqual((await comum.pedir('GET', '/admin/acessos')).status, 403);
     assert.strictEqual((await cliente(ctx.porta).pedir('GET', '/admin/acessos')).status, 401);
+  });
+
+  test('atrás da Cloudflare, o IP gravado é o do visitante (CF-Connecting-IP), com localização', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });
+    try {
+      const c = cliente(proprio.porta);
+      await c.pedir('GET', '/entrar', undefined, { headers: { 'CF-Connecting-IP': '177.45.12.9' } });
+      await c.pedir('POST', '/auth/cadastro', { email: 'cf@exemplo.com', senha: SENHA }, { headers: { 'CF-Connecting-IP': '177.45.12.9' } });
+      const [login, visita] = await proprio.repo.listarAcessos(500);
+      assert.strictEqual(visita.tipo, 'visita');
+      assert.strictEqual(visita.ip, '177.45.12.9');
+      assert.strictEqual(visita.localizacao, 'Cidade de 177.45.12.9');
+      assert.strictEqual(login.tipo, 'login');
+      assert.strictEqual(login.ip, '177.45.12.9');
+      assert.strictEqual(login.localizacao, 'Cidade de 177.45.12.9');
+    } finally { proprio.server.close(); }
+  });
+
+  test('a janela de visitas e o limite de tentativas contam pelo IP real, não pelo da Cloudflare', async () => {
+    const proprio = await subir({ limiteTentativas: { max: 2, janelaMs: 60_000 } });
+    try {
+      const c = cliente(proprio.porta);
+      await c.pedir('GET', '/entrar', undefined, { headers: { 'CF-Connecting-IP': '1.1.1.1' } });
+      await c.pedir('GET', '/entrar', undefined, { headers: { 'CF-Connecting-IP': '2.2.2.2' } });
+      assert.strictEqual((await proprio.repo.listarAcessos(500, 'visita')).length, 2, 'dois visitantes, duas visitas');
+
+      const errado = { email: 'x@exemplo.com', senha: 'errada-12345' };
+      await c.pedir('POST', '/auth/login', errado, { headers: { 'CF-Connecting-IP': '3.3.3.3' } });
+      await c.pedir('POST', '/auth/login', errado, { headers: { 'CF-Connecting-IP': '3.3.3.3' } });
+      const bloqueado = await c.pedir('POST', '/auth/login', errado, { headers: { 'CF-Connecting-IP': '3.3.3.3' } });
+      assert.strictEqual(bloqueado.status, 429, 'terceira tentativa do mesmo visitante');
+      const outro = await c.pedir('POST', '/auth/login', errado, { headers: { 'CF-Connecting-IP': '4.4.4.4' } });
+      assert.strictEqual(outro.status, 401, 'outro visitante não é afetado');
+    } finally { proprio.server.close(); }
+  });
+
+  test('visitas de IP local (checagens internas) não são gravadas', async () => {
+    const proprio = await subir({ janelaVisitaMs: 0 });
+    try {
+      // sem CF-Connecting-IP o IP visto é o loopback do próprio teste
+      await cliente(proprio.porta).pedir('GET', '/entrar');
+      assert.strictEqual((await proprio.repo.listarAcessos(500, 'visita')).length, 0);
+    } finally { proprio.server.close(); }
   });
 
   test('falha ao gravar o registro não impede o login nem a página', async () => {

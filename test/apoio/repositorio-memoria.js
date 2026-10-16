@@ -60,12 +60,12 @@ function criarRepositorioMemoria() {
       return perfil;
     },
 
-    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho }) {
+    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho, localizacao }) {
       checar();
       if (repo.falharRegistro) throw new ErroIndisponivel(new Error('registro simulado'));
       acessos.push({
         id: acessos.length + 1, tipo, user_id: userId || null, email: email || null,
-        ip: ip || null, user_agent: userAgent || null, caminho: caminho || null,
+        ip: ip || null, user_agent: userAgent || null, caminho: caminho || null, localizacao: localizacao || null,
         created_at: new Date(1_700_000_000_000 + (relogio++) * 1000).toISOString(),
       });
     },

@@ -56,28 +56,27 @@
     return so ? `${nav} · ${so}` : nav;
   }
 
+  function celula(classe, texto, titulo) {
+    const el = document.createElement('span');
+    el.className = classe;
+    el.textContent = texto;
+    if (titulo) el.title = titulo;
+    return el;
+  }
+
   function linhaAcesso(a) {
     const row = document.createElement('div');
-    row.className = 'usuario';
-    const tipo = document.createElement('span');
-    tipo.className = 'acesso-tipo' + (a.tipo === 'login' ? ' is-login' : '');
-    tipo.textContent = a.tipo === 'login' ? 'login' : 'visita';
-    const ip = document.createElement('span');
-    ip.className = 'login-ip';
-    ip.textContent = a.ip || '—';
-    const quem = document.createElement('span');
-    quem.className = 'usuario-email';
-    // visita anônima mostra a página aberta; logado mostra a conta
-    quem.textContent = a.email ? a.email + (a.tipo === 'visita' && a.caminho ? ' · ' + a.caminho : '') : (a.caminho || '—');
-    quem.title = [a.email, a.caminho].filter(Boolean).join(' · ');
-    const nav = document.createElement('span');
-    nav.className = 'usuario-data';
-    nav.textContent = resumirNavegador(a.user_agent);
-    nav.title = a.user_agent || '';
-    const quando = document.createElement('span');
-    quando.className = 'usuario-data';
-    quando.textContent = new Date(a.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
-    row.append(tipo, ip, quem, nav, quando);
+    row.className = 'usuario acesso';
+    // visita anônima mostra a página aberta; logado mostra a conta e a página
+    const quem = a.email ? a.email + (a.tipo === 'visita' && a.caminho ? ' · ' + a.caminho : '') : (a.caminho || '—');
+    row.append(
+      celula('acesso-tipo' + (a.tipo === 'login' ? ' is-login' : ''), a.tipo === 'login' ? 'login' : 'visita'),
+      celula('login-ip', a.ip || '—'),
+      celula('acesso-local', a.localizacao || '—', a.localizacao || 'Localização não encontrada'),
+      celula('usuario-email', quem, [a.email, a.caminho].filter(Boolean).join(' · ')),
+      celula('usuario-data', resumirNavegador(a.user_agent), a.user_agent || ''),
+      celula('usuario-data', new Date(a.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })),
+    );
     return row;
   }
 

@@ -5,10 +5,11 @@
 const { criarSessao }      = require('./sessao');
 const { criarMiddlewares } = require('./middleware');
 const { criarRotas }       = require('./rotas');
+const { criarGeolocalizador } = require('./geo');
 
-function montarAuth(app, { repositorio, adminEmail, segredoSessao, limiteTentativas, janelaVisitaMs }) {
+function montarAuth(app, { repositorio, adminEmail, segredoSessao, limiteTentativas, janelaVisitaMs, geolocalizador = criarGeolocalizador() }) {
   const sessao = criarSessao(segredoSessao);
-  const mw     = criarMiddlewares({ sessao, repositorio, adminEmail, janelaVisitaMs });
+  const mw     = criarMiddlewares({ sessao, repositorio, adminEmail, geolocalizador, janelaVisitaMs });
 
   app.use(mw.carregarSessao);
   app.use(criarRotas({ sessao, repositorio, mw, limiteTentativas }));

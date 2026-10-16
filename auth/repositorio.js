@@ -46,15 +46,15 @@ function criarRepositorioSupabase({ admin, loginComSenha }) {
       return data;
     },
 
-    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho }) {
+    async registrarAcesso({ tipo, userId, email, ip, userAgent, caminho, localizacao }) {
       const { error } = await admin.from(ACESSOS)
-        .insert({ tipo, user_id: userId || null, email: email || null, ip, user_agent: userAgent, caminho: caminho || null });
+        .insert({ tipo, user_id: userId || null, email: email || null, ip, user_agent: userAgent, caminho: caminho || null, localizacao: localizacao || null });
       if (error) throw falha(error);
     },
 
     async listarAcessos(limite, tipo) {
       let consulta = admin.from(ACESSOS)
-        .select('id, tipo, user_id, email, ip, user_agent, caminho, created_at')
+        .select('id, tipo, user_id, email, ip, localizacao, user_agent, caminho, created_at')
         .order('created_at', { ascending: false }).order('id', { ascending: false })
         .limit(limite);
       if (tipo) consulta = consulta.eq('tipo', tipo);
